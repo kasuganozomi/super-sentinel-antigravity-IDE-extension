@@ -1,5 +1,10 @@
 # Antigravity Super Sentinel
 
+[![Author](https://img.shields.io/badge/AUTHOR-IKADZURA-a855f7?style=flat-square)](https://github.com/kasuganozomi)
+[![Style](https://img.shields.io/badge/STYLE-KADZURA%20STANDARD-f472b6?style=flat-square)](#style-philosophy)
+[![Security](https://img.shields.io/badge/SECURITY-100%25%20LOCAL-10b981?style=flat-square)](#features)
+[![Platform](https://img.shields.io/badge/PLATFORM-ANTIGRAVITY%20IDE-2563eb?style=flat-square)](#prerequisites)
+
 Agents Utility Dashboard for Google Antigravity IDE. Crafted by Kadzura with absolute precision and premium design metrics.
 
 ## Description
@@ -29,4 +34,3 @@ Engineered by Kadzura to deliver a highly precise, luxurious utility suite for a
 - **Python 3** (database fallback queries).
 - **lsof** utility (`sudo pacman -S lsof`).
 - Write permissions on `/opt/antigravity-ide/` (`sudo chown -R $USER:$USER /opt/antigravity-ide`).
-# super-sentinel-antigravity-IDE-extension
