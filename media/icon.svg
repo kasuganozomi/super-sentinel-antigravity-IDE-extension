@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Circular radar contour -->
+    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-dasharray="2 2" fill="none"></circle>
+    <circle cx="12" cy="12" r="6" stroke="currentColor" fill="none"></circle>
+    <!-- Overwatch Eye -->
+    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" stroke="currentColor" fill="none"></path>
+    <circle cx="12" cy="12" r="2.2" stroke="currentColor" fill="currentColor" fill-opacity="0.25"></circle>
+    <!-- Crosshair ticks -->
+    <line x1="12" y1="1" x2="12" y2="3" stroke="currentColor"></line>
+    <line x1="12" y1="21" x2="12" y2="23" stroke="currentColor"></line>
+    <line x1="1" y1="12" x2="3" y2="12" stroke="currentColor"></line>
+    <line x1="21" y1="12" x2="23" y2="12" stroke="currentColor"></line>
+</svg>

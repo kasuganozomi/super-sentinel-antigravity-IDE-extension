@@ -1,0 +1,83 @@
+{
+	"name": "antigravity-super-sentinel",
+	"displayName": "Antigravity Super Sentinel",
+	"description": "Agents Utility Dashboard for Google Antigravity IDE",
+	"version": "1.0.0",
+	"publisher": "IKadzura",
+	"license": "MIT",
+	"icon": "media/icon.png",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/kasuganozomi/super-sentinel-antigravity-IDE-extension.git"
+	},
+	"bugs": {
+		"url": "https://github.com/kasuganozomi/super-sentinel-antigravity-IDE-extension/issues"
+	},
+	"homepage": "https://github.com/kasuganozomi/super-sentinel-antigravity-IDE-extension#readme",
+	"engines": {
+		"vscode": "^1.60.0"
+	},
+	"extensionKind": [
+		"ui"
+	],
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"main": "./src/extension.js",
+	"contributes": {
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "antigravity-super-sentinel-container",
+					"title": "Super Sentinel",
+					"icon": "media/icon.svg"
+				}
+			]
+		},
+		"views": {
+			"antigravity-super-sentinel-container": [
+				{
+					"type": "webview",
+					"id": "antigravity-super-sentinel-view",
+					"name": "Sentinel Dashboard"
+				}
+			]
+		},
+		"commands": [
+			{
+				"command": "antigravity-super-sentinel.enable",
+				"title": "Antigravity Super Sentinel: Enable (Inject Script)"
+			},
+			{
+				"command": "antigravity-super-sentinel.disable",
+				"title": "Antigravity Super Sentinel: Disable (Remove Script)"
+			},
+			{
+				"command": "antigravity-super-sentinel.toggle",
+				"title": "Antigravity Super Sentinel: Toggle ON/OFF"
+			},
+			{
+				"command": "antigravity-super-sentinel.openSettings",
+				"title": "Antigravity Super Sentinel: Open Dashboard"
+			}
+		],
+		"configuration": {
+			"title": "Antigravity Super Sentinel",
+			"properties": {
+				"antigravity-super-sentinel.enabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable or disable Auto Click and Auto Scroll"
+				},
+				"antigravity-super-sentinel.scrollEnabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "Enable or disable Auto Scroll"
+				}
+			}
+		}
+	}
+}
