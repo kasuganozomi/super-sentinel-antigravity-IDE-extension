@@ -1,3 +1,139 @@
+function formatCountdownServer(expiration) {
+    if (!expiration) return 'No Reset';
+    const now = Math.floor(Date.now() / 1000);
+    const diff = expiration - now;
+    if (diff <= 0) return 'Quota Available';
+    
+    const r = Math.floor(diff / 60);
+    const n = Math.floor(r / 1440);
+    const a = Math.floor((r % 1440) / 60);
+    const i = r % 60;
+    
+    let timeStr = '';
+    if (n > 0) {
+        timeStr = `${n} day${n > 1 ? 's' : ''}, ${a} hour${a > 1 ? 's' : ''}`;
+    } else if (a > 0) {
+        timeStr = `${a} hour${a > 1 ? 's' : ''}, ${i} minute${i > 1 ? 's' : ''}`;
+    } else {
+        timeStr = `${i} minute${i > 1 ? 's' : ''}`;
+    }
+    return `Refreshes in ${timeStr}`;
+}
+
+function getCountdownColorServer(expiration) {
+    if (!expiration) return 'green';
+    const now = Math.floor(Date.now() / 1000);
+    const diff = expiration - now;
+    if (diff <= 0) return 'green';
+    const hours = diff / 3600;
+    if (hours < 1) return 'red';
+    if (hours < 2) return 'yellow';
+    return 'green';
+}
+
+function buildModelsListHtml(modelsList, activeModel) {
+    if (!modelsList || modelsList.length === 0) {
+        return '<div class="empty-logs">No models data found in global state.</div>';
+    }
+    const order = [
+        'Gemini 3.5 Flash (Low)',
+        'Gemini 3.5 Flash (Medium)',
+        'Gemini 3.5 Flash (High)',
+        'Gemini 3.1 Pro (Low)',
+        'Gemini 3.1 Pro (High)',
+        'Claude Sonnet 4.6 (Thinking)',
+        'Claude Opus 4.6 (Thinking)',
+        'GPT-OSS 120B (Medium)'
+    ];
+    
+    const sortedModels = [...modelsList].sort((a, b) => {
+        const indexA = order.indexOf(a.name);
+        const indexB = order.indexOf(b.name);
+        const valA = indexA === -1 ? 999 : indexA;
+        const valB = indexB === -1 ? 999 : indexB;
+        return valA - valB;
+    });
+
+    return sortedModels.map(m => {
+        const isActive = m.name === activeModel;
+        const hasQuota = m.quota === 1;
+        const countdownStr = formatCountdownServer(m.expiration);
+        const r = m.remainingFraction !== undefined && m.remainingFraction !== null ? m.remainingFraction : 0.0;
+        const barColorClass = r < 0.1 ? 'bg-red' : (r < 0.25 ? 'bg-yellow' : 'bg-green');
+        const segmentsHtml = [0,1,2,3,4].map(s => {
+            const o = s * 0.2;
+            const u = (s + 1) * 0.2;
+            let d = 0;
+            if (r >= u) {
+                d = 100;
+            } else if (r > o) {
+                d = Math.round((r - o) / 0.2 * 100);
+            }
+            return `
+                <div class="quota-segment">
+                    <div class="quota-segment-fill ${barColorClass}" style="width: ${d}%"></div>
+                </div>
+            `;
+        }).join('');
+        const mimeStr = m.mimeTypeCount ? m.mimeTypeCount + ' types' : 'N/A';
+        return `
+            <div class="model-quota-row ${isActive ? 'active' : ''}" data-model-name="${m.name}" data-expiration="${m.expiration || ''}">
+                <div class="model-quota-header">
+                    <div class="model-quota-name">
+                        ${isActive ? '<span class="model-quota-active-indicator"></span>' : ''}
+                        <span>${m.name}</span>
+                    </div>
+                    <div class="model-quota-countdown" data-exp="${m.expiration || ''}">
+                        <span class="countdown-text">${countdownStr}</span>
+                    </div>
+                </div>
+                <div class="quota-bar-container">
+                    ${segmentsHtml}
+                </div>
+                <div class="model-quota-meta" style="margin-top: 3px; font-size: 8px;">
+                    <span class="model-quota-mime">${mimeStr}</span>
+                    <span class="quota-badge ${hasQuota ? 'available' : 'exhausted'}" style="padding: 1px 4px; font-size: 8px;">${hasQuota ? 'Available' : 'Exhausted'}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function buildCachedAccountsHtml(cachedAccounts, activeEmail) {
+    const inactiveAccounts = (cachedAccounts || []).filter(acc => acc.email !== activeEmail);
+    if (inactiveAccounts.length === 0) {
+        return '<div class="empty-logs" style="padding: 10px 0; text-align: center;">No cached account history.</div>';
+    }
+
+    return inactiveAccounts.map((acc, index) => {
+        const id = `acc-history-${index}`;
+        const planClass = acc.plan && acc.plan !== 'Free' ? 'available' : 'exhausted';
+        const modelsHtml = buildModelsListHtml(acc.modelsList, acc.activeModel);
+        const lastSeenDate = acc.lastSeen ? new Date(acc.lastSeen).toLocaleDateString() : 'Unknown';
+
+        return `
+            <div class="glass-panel" style="margin-bottom: 8px; padding: 10px; border-color: rgba(168, 85, 247, 0.1); width: 100%;">
+                <div class="collapsible-header" onclick="toggleExpand('${id}-body', '${id}-arrow')" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                    <div style="display: flex; flex-direction: column; gap: 2px;">
+                        <span style="font-size: 11px; font-weight: 700; font-family: monospace; color: var(--text-primary);">${acc.email}</span>
+                        <span class="quota-badge ${planClass}" style="align-self: flex-start; padding: 1px 4px; font-size: 8px; margin-top: 1px;">${acc.plan || 'Free'}</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <span style="font-size: 8px; color: var(--text-muted);">Last seen: ${lastSeenDate}</span>
+                        <span id="${id}-arrow" class="collapsible-arrow" style="font-size: 8px; transition: transform 0.2s ease; display: inline-block;">▶</span>
+                    </div>
+                </div>
+                <div id="${id}-body" style="display: none; flex-direction: column; gap: 6px; border-top: 1px solid var(--border-color); padding-top: 8px; margin-top: 8px; width: 100%;">
+                    <div style="font-size: 9px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 2px;">Last Known Quotas</div>
+                    <div class="models-list" style="display: flex; flex-direction: column; gap: 6px; width: 100%;">
+                        ${modelsHtml}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
 module.exports = function buildSettingsHtml(data) {
     const isEnabled = data.enabled !== false;
     const isScrollEnabled = data.scrollEnabled !== false;
@@ -35,6 +171,10 @@ module.exports = function buildSettingsHtml(data) {
         browserFrames: [],
         childSessions: []
     };
+
+    const initialQuotaPct = Math.round((overwatch.activeModelRemainingFraction || 0.0) * 100);
+    const quotaColor = initialQuotaPct < 10 ? 'var(--color-red)' : (initialQuotaPct < 25 ? 'var(--color-yellow)' : 'var(--color-green)');
+    const initialPlanClass = overwatch.plan && overwatch.plan !== 'Free' ? 'available' : 'exhausted';
 
     // Build pattern chips HTML
     const chipsHtml = clickPatterns.map(p => `
@@ -1076,11 +1216,11 @@ module.exports = function buildSettingsHtml(data) {
                     <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); padding: 6px 8px; border-radius: 4px; border: 1px solid var(--border-color);">
                         <div class="active-quota-status" id="radar-active-quota" style="text-align: left;">
                             <div style="font-size: 8px; color: var(--text-secondary); text-transform: uppercase; font-weight: 500; line-height: 1;">Quota Remaining</div>
-                            <div style="font-size: 13px; font-weight: 700; color: var(--color-green); line-height: 1.2; font-family: monospace; margin-top: 2px;" id="radar-active-quota-val">0%</div>
+                            <div style="font-size: 13px; font-weight: 700; color: ${quotaColor}; line-height: 1.2; font-family: monospace; margin-top: 2px;" id="radar-active-quota-val">${initialQuotaPct}%</div>
                         </div>
                         <div class="reset-timer" id="radar-reset-timer" style="align-items: flex-end;">
                             <span class="reset-timer-label">Resets in</span>
-                            <span class="reset-timer-value green" id="radar-reset-value" style="margin-top: 2px;">--:--:--</span>
+                            <span class="reset-timer-value ${getCountdownColorServer(overwatch.activeModelExpiration)}" id="radar-reset-value" style="margin-top: 2px;">${formatCountdownServer(overwatch.activeModelExpiration)}</span>
                         </div>
                     </div>
                     
@@ -1092,9 +1232,20 @@ module.exports = function buildSettingsHtml(data) {
                         </div>
                         <div>
                             <span style="color: var(--text-secondary);">Plan:</span>
-                            <span id="sentinel-plan" class="quota-badge available" style="padding: 1px 4px; font-size: 8px; margin-left: 2px; text-transform: uppercase; font-weight: 600;">${overwatch.plan || 'Free'}</span>
+                            <span id="sentinel-plan" class="quota-badge ${initialPlanClass}" style="padding: 1px 4px; font-size: 8px; margin-left: 2px; text-transform: uppercase; font-weight: 600;">${overwatch.plan || 'Free'}</span>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            <!-- Account History Collapsible -->
+            <div class="glass-panel" id="panel-account-history">
+                <div class="panel-title collapsible-header" onclick="toggleExpand('account-history-body', 'account-history-arrow')">
+                    <span class="collapsible-title-text">Account History Cache</span>
+                    <span id="account-history-arrow" class="collapsible-arrow" style="font-size: 8px; transition: transform 0.2s ease; display: inline-block;">▶</span>
+                </div>
+                <div id="account-history-body" style="display: none; flex-direction: column; gap: 2px; border-top: 1px solid var(--border-color); padding-top: 10px; margin-top: 10px;">
+                    ${buildCachedAccountsHtml(data.cachedAccounts, overwatch.email)}
                 </div>
             </div>
 
@@ -1120,7 +1271,7 @@ module.exports = function buildSettingsHtml(data) {
             <div class="glass-panel">
                 <div class="panel-title">Model Quotas & Status</div>
                 <div class="models-list" id="radar-models-list" style="display: flex; flex-direction: column; gap: 6px;">
-                    <div class="empty-logs">Scanning models state...</div>
+                    ${buildModelsListHtml(overwatch.modelsList, overwatch.activeModel)}
                 </div>
             </div>
 
@@ -1449,8 +1600,102 @@ module.exports = function buildSettingsHtml(data) {
             document.getElementById('stats-total-clicks').innerText = '0';
         }
 
+        function renderCachedAccounts(cachedAccounts, activeEmail) {
+            const container = document.getElementById('account-history-body');
+            if (!container) return;
+
+            const inactiveAccounts = (cachedAccounts || []).filter(acc => acc.email !== activeEmail);
+            if (inactiveAccounts.length === 0) {
+                container.innerHTML = '<div class="empty-logs" style="padding: 10px 0; text-align: center;">No cached account history.</div>';
+                return;
+            }
+
+            const expandedStates = {};
+            inactiveAccounts.forEach((acc, index) => {
+                const id = \`acc-history-\${index}\`;
+                const body = document.getElementById(\`\${id}-body\`);
+                if (body) {
+                    expandedStates[id] = body.style.display !== 'none';
+                }
+            });
+
+            container.innerHTML = inactiveAccounts.map((acc, index) => {
+                const id = \`acc-history-\${index}\`;
+                const planClass = acc.plan && acc.plan !== 'Free' ? 'available' : 'exhausted';
+                const isExpanded = expandedStates[id] || false;
+
+                let modelsHtml = '<div class="empty-logs">No models data.</div>';
+                if (acc.modelsList && acc.modelsList.length > 0) {
+                    modelsHtml = acc.modelsList.map(m => {
+                        const hasQuota = m.quota === 1;
+                        const r = m.remainingFraction !== undefined && m.remainingFraction !== null ? m.remainingFraction : 0.0;
+                        const barColorClass = r < 0.1 ? 'bg-red' : (r < 0.25 ? 'bg-yellow' : 'bg-green');
+                        const segmentsHtml = [0,1,2,3,4].map(s => {
+                            const o = s * 0.2;
+                            const u = (s + 1) * 0.2;
+                            let d = 0;
+                            if (r >= u) {
+                                d = 100;
+                            } else if (r > o) {
+                                d = Math.round((r - o) / 0.2 * 100);
+                            }
+                            return \`
+                                <div class="quota-segment">
+                                    <div class="quota-segment-fill \${barColorClass}" style="width: \${d}%"></div>
+                                </div>
+                            \`;
+                        }).join('');
+                        const mimeStr = m.mimeTypeCount ? m.mimeTypeCount + ' types' : 'N/A';
+                        return \`
+                            <div class="model-quota-row" style="border-color: rgba(255, 255, 255, 0.03); margin-top: 4px;">
+                                <div class="model-quota-header">
+                                    <div class="model-quota-name">
+                                        <span>\${m.name}</span>
+                                    </div>
+                                    <div class="model-quota-countdown">
+                                        <span class="countdown-text">\${formatCountdown(m.expiration)}</span>
+                                    </div>
+                                </div>
+                                <div class="quota-bar-container">
+                                    \${segmentsHtml}
+                                </div>
+                                <div class="model-quota-meta" style="margin-top: 3px; font-size: 8px;">
+                                    <span class="model-quota-mime">\${mimeStr}</span>
+                                    <span class="quota-badge \${hasQuota ? 'available' : 'exhausted'}" style="padding: 1px 4px; font-size: 8px;">\${hasQuota ? 'Available' : 'Exhausted'}</span>
+                                </div>
+                            </div>
+                        \`;
+                    }).join('');
+                }
+
+                const lastSeenDate = acc.lastSeen ? new Date(acc.lastSeen).toLocaleDateString() : 'Unknown';
+
+                return \`
+                    <div class="glass-panel" style="margin-bottom: 8px; padding: 10px; border-color: rgba(168, 85, 247, 0.1); width: 100%;">
+                        <div class="collapsible-header" onclick="toggleExpand('\${id}-body', '\${id}-arrow')" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                            <div style="display: flex; flex-direction: column; gap: 2px;">
+                                <span style="font-size: 11px; font-weight: 700; font-family: monospace; color: var(--text-primary);">\${acc.email}</span>
+                                <span class="quota-badge \${planClass}" style="align-self: flex-start; padding: 1px 4px; font-size: 8px; margin-top: 1px;">\${acc.plan || 'Free'}</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <span style="font-size: 8px; color: var(--text-muted);">Last seen: \${lastSeenDate}</span>
+                                <span id="\${id}-arrow" class="collapsible-arrow" style="font-size: 8px; transition: transform 0.2s ease; display: inline-block; transform: \${isExpanded ? 'rotate(90deg)' : 'rotate(0deg)'};">▶</span>
+                            </div>
+                        </div>
+                        <div id="\${id}-body" style="display: \${isExpanded ? 'flex' : 'none'}; flex-direction: column; gap: 6px; border-top: 1px solid var(--border-color); padding-top: 8px; margin-top: 8px; width: 100%;">
+                            <div style="font-size: 9px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 2px;">Last Known Quotas</div>
+                            <div class="models-list" style="display: flex; flex-direction: column; gap: 6px; width: 100%;">
+                                \${modelsHtml}
+                            </div>
+                        </div>
+                    </div>
+                \`;
+            }).join('');
+        }
+
         // --- Overwatch real-time UI updates ---
         function updateOverwatchUi(data) {
+            renderCachedAccounts(data.cachedAccounts, data.email);
             if (!data.sessionActive) {
                 document.getElementById('radar-active-status').innerText = 'OFFLINE';
                 document.getElementById('radar-active-badge').classList.add('inactive');
@@ -1838,13 +2083,11 @@ module.exports = function buildSettingsHtml(data) {
         }, 1000);
 
         // Initialize UI with bootstrap data
-        setTimeout(() => {
-            const bootstrapState = ${JSON.stringify({ enabled: isEnabled, scrollEnabled: isScrollEnabled, clickIntervalMs, scrollIntervalMs, scrollPauseMs, clickPatterns, totalClicks, allowMode, selectivePermissions: selective })};
-            const bootstrapOverwatch = ${JSON.stringify(overwatch)};
-            
-            // Run bootstrap update
-            updateOverwatchUi(bootstrapOverwatch);
-        }, 100);
+        const bootstrapState = ${JSON.stringify({ enabled: isEnabled, scrollEnabled: isScrollEnabled, clickIntervalMs, scrollIntervalMs, scrollPauseMs, clickPatterns, totalClicks, allowMode, selectivePermissions: selective })};
+        const bootstrapOverwatch = ${JSON.stringify(overwatch)};
+        
+        // Run bootstrap update
+        updateOverwatchUi(bootstrapOverwatch);
     </script>
 </body>
 </html>`;

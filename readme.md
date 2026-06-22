@@ -1,7 +1,7 @@
 # Antigravity Super Sentinel
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.1.3-purple.svg?style=for-the-badge&logo=visual-studio-code" alt="Version" />
+  <img src="https://img.shields.io/badge/version-2.2.0-purple.svg?style=for-the-badge&logo=visual-studio-code" alt="Version" />
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20WSL-blue.svg?style=for-the-badge" alt="Platform" />
   <img src="https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge" alt="License" />
   <img src="https://img.shields.io/badge/Built%20For-Antigravity%20IDE-orange.svg?style=for-the-badge" alt="Built For" />

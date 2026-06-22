@@ -76,6 +76,13 @@ function postToLsp(port, csrf) {
 }
 
 function tryHttpsPost(port, csrf, cb) {
+    let called = false;
+    const safeCb = (val) => {
+        if (called) return;
+        called = true;
+        cb(val);
+    };
+
     const payload = JSON.stringify({
         metadata: {
             ideName: "vscode",
@@ -108,23 +115,34 @@ function tryHttpsPost(port, csrf, cb) {
                 if (res.statusCode === 200) {
                     const parsed = JSON.parse(body);
                     const mapped = mapLspData(parsed);
-                    cb(mapped);
+                    safeCb(mapped);
                 } else {
-                    cb(null);
+                    safeCb(null);
                 }
             } catch (e) {
-                cb(null);
+                safeCb(null);
             }
         });
     });
     
-    req.on('error', () => cb(null));
+    req.setTimeout(1500, () => {
+        req.destroy();
+        safeCb(null);
+    });
+    req.on('error', () => safeCb(null));
     req.write(payload);
     req.end();
 }
 
 // Perform POST to target port (tries HTTPS first, then HTTP)
 function tryHttpPost(port, csrf, cb) {
+    let called = false;
+    const safeCb = (val) => {
+        if (called) return;
+        called = true;
+        cb(val);
+    };
+
     const payload = JSON.stringify({
         metadata: {
             ideName: "vscode",
@@ -156,17 +174,21 @@ function tryHttpPost(port, csrf, cb) {
                 if (res.statusCode === 200) {
                     const parsed = JSON.parse(body);
                     const mapped = mapLspData(parsed);
-                    cb(mapped);
+                    safeCb(mapped);
                 } else {
-                    cb(null);
+                    safeCb(null);
                 }
             } catch (e) {
-                cb(null);
+                safeCb(null);
             }
         });
     });
     
-    req.on('error', () => cb(null));
+    req.setTimeout(1500, () => {
+        req.destroy();
+        safeCb(null);
+    });
+    req.on('error', () => safeCb(null));
     req.write(payload);
     req.end();
 }
@@ -284,18 +306,34 @@ async function queryLsp() {
     return null;
 }
 
-// Helper to get active model preference from SQLite DB
-function getActiveModelIdFromSqlite() {
+let cachedSqliteData = null;
+let lastSqliteQueryTime = 0;
+
+function getSqliteModelInfo() {
+    const now = Date.now();
+    if (cachedSqliteData && (now - lastSqliteQueryTime < 5000)) {
+        return cachedSqliteData;
+    }
     try {
         const pythonScript = path.join(__dirname, 'query_model_info.py');
         const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
         const modelInfoRaw = execSync(`${pythonCmd} "${pythonScript}"`, { encoding: 'utf8' });
         if (modelInfoRaw) {
             const modelInfo = JSON.parse(modelInfoRaw);
-            return modelInfo.activeModelId;
+            cachedSqliteData = modelInfo;
+            lastSqliteQueryTime = now;
+            return modelInfo;
         }
-    } catch (e) {}
-    return null;
+    } catch (e) {
+        lastSqliteQueryTime = now;
+    }
+    return cachedSqliteData;
+}
+
+// Helper to get active model preference from SQLite DB
+function getActiveModelIdFromSqlite() {
+    const modelInfo = getSqliteModelInfo();
+    return modelInfo ? modelInfo.activeModelId : null;
 }
 
 // Helper to write files with clean error handling
@@ -585,7 +623,11 @@ function readState() {
     if (statePath && fs.existsSync(statePath)) {
         try {
             const raw = fs.readFileSync(statePath, 'utf8');
-            return JSON.parse(raw);
+            const state = JSON.parse(raw);
+            if (!state.cachedAccounts) {
+                state.cachedAccounts = [];
+            }
+            return state;
         } catch (e) {
             console.error('[Sentinel] Failed to parse state JSON:', e.message);
         }
@@ -612,7 +654,8 @@ function readState() {
         ],
         totalClicks: 0,
         clickStats: {},
-        clickLog: []
+        clickLog: [],
+        cachedAccounts: []
     };
 }
 
@@ -964,11 +1007,8 @@ function gatherSentinelData() {
         } else {
             // SQLite Fallback (e.g. if LSP is loading)
             try {
-                const pythonScript = path.join(__dirname, 'query_model_info.py');
-                const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-                const modelInfoRaw = execSync(`${pythonCmd} "${pythonScript}"`, { encoding: 'utf8' });
-                if (modelInfoRaw) {
-                    const modelInfo = JSON.parse(modelInfoRaw);
+                const modelInfo = getSqliteModelInfo();
+                if (modelInfo) {
                     if (modelInfo.activeModel && !transcriptActiveModel) {
                         data.activeModel = modelInfo.activeModel;
                     }
@@ -1076,6 +1116,37 @@ function gatherSentinelData() {
                 } catch (e) {}
             }
         }
+
+        // Account Cache Saving Logic
+        const state = readState();
+        if (!state.cachedAccounts) {
+            state.cachedAccounts = [];
+        }
+        const activeEmail = data.email;
+        if (activeEmail && activeEmail !== 'offline') {
+            let accountEntry = state.cachedAccounts.find(acc => acc.email === activeEmail);
+            if (!accountEntry) {
+                accountEntry = { email: activeEmail };
+                state.cachedAccounts.push(accountEntry);
+            }
+            accountEntry.plan = data.plan || 'Free';
+            accountEntry.activeModel = data.activeModel;
+            accountEntry.activeModelExpiration = data.activeModelExpiration;
+            accountEntry.activeModelRemainingFraction = data.activeModelRemainingFraction;
+            accountEntry.modelsList = data.modelsList || [];
+            accountEntry.lastSeen = Date.now();
+            accountEntry.isActive = true;
+
+            // Mark all other accounts as inactive
+            state.cachedAccounts.forEach(acc => {
+                if (acc.email !== activeEmail) {
+                    acc.isActive = false;
+                }
+            });
+
+            writeState(state);
+        }
+        data.cachedAccounts = state.cachedAccounts || [];
 
     } catch (err) {
         console.error('[Sentinel] Data gathering error:', err.message);
