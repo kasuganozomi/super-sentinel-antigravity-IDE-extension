@@ -7,6 +7,15 @@ const https = require('https');
 const execSync = require('child_process').execSync;
 const buildSettingsHtml = require('./settingsHtml');
 
+function debugLog(msg) {
+    try {
+        const logPath = '/home/kadzura/.gemini/antigravity-ide/brain/a9d1c664-09eb-4e68-b570-253a24f7eddc/scratch/sentinel_debug.log';
+        const ts = new Date().toISOString();
+        fs.appendFileSync(logPath, `[${ts}] ${msg}\n`, 'utf8');
+    } catch (e) {}
+}
+
+
 const TAG_START = '<!-- ANTIGRAVITY-SUPER-SENTINEL-START -->';
 const TAG_END = '<!-- ANTIGRAVITY-SUPER-SENTINEL-END -->';
 const OLD_TAG_START = '<!-- ANTIGRAVITY-CLEAN-AUTO-ACCEPT-START -->';
@@ -248,26 +257,69 @@ function getDbPath() {
     return candidates[0];
 }
 
-// Robust runner for the query_model_info.py script passing dynamic DB path
+let cachedModelInfoRaw = null;
+let cachedDbMtime = 0;
+let cachedDbPath = '';
+let lastPythonRunTime = 0;
+
+// Robust runner for the query_model_info.py script passing dynamic DB path (with mtime caching optimization)
 function runQueryModelInfo() {
     try {
-        const pythonScript = path.join(__dirname, 'query_model_info.py');
         const dbPath = getDbPath();
+        debugLog(`runQueryModelInfo: dbPath=${dbPath}, exists=${fs.existsSync(dbPath)}`);
+        if (!fs.existsSync(dbPath)) return null;
+
+        const now = Date.now();
+        const stat = fs.statSync(dbPath);
+        const cacheAge = now - lastPythonRunTime;
+
+        // On Windows, file mtime changes are instantly visible.
+        // On WSL/Linux, file mtime changes on Windows mounts (drvfs) are often cached by the kernel,
+        // so we enforce a maximum cache age of 4 seconds to force checking.
+        const isCacheValid = (process.platform === 'win32')
+            ? (dbPath === cachedDbPath && stat.mtimeMs === cachedDbMtime && cachedModelInfoRaw)
+            : (dbPath === cachedDbPath && stat.mtimeMs === cachedDbMtime && cacheAge < 4000 && cachedModelInfoRaw);
+
+        if (isCacheValid) {
+            debugLog(`runQueryModelInfo: Cache hit (age: ${cacheAge}ms)`);
+            return cachedModelInfoRaw;
+        }
+
+        const pythonScript = path.join(__dirname, 'query_model_info.py');
         const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-        const modelInfoRaw = execSync(`"${pythonCmd}" "${pythonScript}" "${dbPath}"`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
-        return modelInfoRaw;
-    } catch (e) {
-        if (process.platform === 'win32') {
-            const fallbacks = ['python3', 'py'];
-            for (const cmd of fallbacks) {
-                try {
-                    const pythonScript = path.join(__dirname, 'query_model_info.py');
-                    const dbPath = getDbPath();
-                    const modelInfoRaw = execSync(`"${cmd}" "${pythonScript}" "${dbPath}"`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
-                    return modelInfoRaw;
-                } catch (e2) {}
+        let modelInfoRaw = null;
+
+        try {
+            debugLog(`runQueryModelInfo: executing "${pythonCmd}" "${pythonScript}" "${dbPath}"`);
+            modelInfoRaw = execSync(`"${pythonCmd}" "${pythonScript}" "${dbPath}"`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+        } catch (e) {
+            debugLog(`runQueryModelInfo error with "${pythonCmd}": ${e.message}. Stderr: ${e.stderr ? e.stderr.toString() : ''}`);
+            if (process.platform === 'win32') {
+                const fallbacks = ['python3', 'py'];
+                for (const cmd of fallbacks) {
+                    try {
+                        debugLog(`runQueryModelInfo fallback: executing "${cmd}"`);
+                        modelInfoRaw = execSync(`"${cmd}" "${pythonScript}" "${dbPath}"`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+                        if (modelInfoRaw) break;
+                    } catch (e2) {
+                        debugLog(`runQueryModelInfo fallback "${cmd}" error: ${e2.message}`);
+                    }
+                }
             }
         }
+
+        if (modelInfoRaw) {
+            cachedModelInfoRaw = modelInfoRaw;
+            cachedDbMtime = stat.mtimeMs;
+            cachedDbPath = dbPath;
+            lastPythonRunTime = now;
+            debugLog(`runQueryModelInfo success, returned length: ${modelInfoRaw.length}`);
+        } else {
+            debugLog(`runQueryModelInfo failed, returned null`);
+        }
+        return modelInfoRaw;
+    } catch (err) {
+        debugLog(`runQueryModelInfo outer catch: ${err.message}`);
     }
     return null;
 }
@@ -275,6 +327,7 @@ function runQueryModelInfo() {
 // Scans PIDs, detects ports, updates cachedLspData
 async function queryLsp() {
     try {
+        debugLog("queryLsp: starting scan");
         let processes = [];
         const isWin = process.platform === 'win32';
         
@@ -286,7 +339,14 @@ async function queryLsp() {
                 if (psOut.trim()) {
                     const parsed = JSON.parse(psOut);
                     if (parsed) {
-                        processes = Array.isArray(parsed) ? parsed : [parsed];
+                        const procs = Array.isArray(parsed) ? parsed : [parsed];
+                        procs.forEach(p => {
+                            processes.push({
+                                ProcessId: p.ProcessId,
+                                CommandLine: p.CommandLine,
+                                isWindowsProcess: true
+                            });
+                        });
                     }
                 }
             } catch (e) {
@@ -297,18 +357,25 @@ async function queryLsp() {
                     if (psOut.trim()) {
                         const parsed = JSON.parse(psOut);
                         if (parsed) {
-                            processes = Array.isArray(parsed) ? parsed : [parsed];
+                            const procs = Array.isArray(parsed) ? parsed : [parsed];
+                            procs.forEach(p => {
+                                processes.push({
+                                    ProcessId: p.ProcessId,
+                                    CommandLine: p.CommandLine,
+                                    isWindowsProcess: true
+                                });
+                            });
                         }
                     }
                 } catch (e2) {}
             }
         } else {
-            // Linux/macOS
+            // Linux/macOS native process scanning
             let psOut = '';
             try {
                 psOut = execSync('ps -ef | grep language_server | grep -v grep', { encoding: 'utf8' });
             } catch (e) {
-                return null;
+                debugLog(`queryLsp ps grep failed: ${e.message}`);
             }
             if (psOut.trim()) {
                 const lines = psOut.trim().split(/\r?\n/);
@@ -318,13 +385,55 @@ async function queryLsp() {
                     if (pid && !isNaN(Number(pid))) {
                         processes.push({
                             ProcessId: Number(pid),
-                            CommandLine: line
+                            CommandLine: line,
+                            isWindowsProcess: false
                         });
                     }
                 });
             }
+            
+            // If no native processes are found, check if we are in WSL and can query Windows processes via powershell.exe
+            if (processes.length === 0) {
+                try {
+                    const cmd = 'powershell.exe -Command "Get-CimInstance Win32_Process -Filter \\"Name LIKE \'%language_server%\'\\" | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress"';
+                    const psOut = execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+                    if (psOut.trim()) {
+                        const parsed = JSON.parse(psOut);
+                        if (parsed) {
+                            const procs = Array.isArray(parsed) ? parsed : [parsed];
+                            procs.forEach(p => {
+                                processes.push({
+                                    ProcessId: p.ProcessId,
+                                    CommandLine: p.CommandLine,
+                                    isWindowsProcess: true
+                                });
+                            });
+                        }
+                    }
+                } catch (e) {
+                    // Fallback using older gwmi command via powershell.exe
+                    try {
+                        const cmd = 'powershell.exe -Command "Get-WmiObject Win32_Process -Filter \\"Name LIKE \'%language_server%\'\\" | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress"';
+                        const psOut = execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+                        if (psOut.trim()) {
+                            const parsed = JSON.parse(psOut);
+                            if (parsed) {
+                                const procs = Array.isArray(parsed) ? parsed : [parsed];
+                                procs.forEach(p => {
+                                    processes.push({
+                                        ProcessId: p.ProcessId,
+                                        CommandLine: p.CommandLine,
+                                        isWindowsProcess: true
+                                    });
+                                });
+                            }
+                        }
+                    } catch (e2) {}
+                }
+            }
         }
         
+        debugLog(`queryLsp: found ${processes.length} processes`);
         if (processes.length === 0) return null;
         
         for (const proc of processes) {
@@ -333,13 +442,18 @@ async function queryLsp() {
             if (!pid || isNaN(Number(pid))) continue;
             
             const tokenMatch = cmdLine.match(/--csrf_token[\s=]+([^\s]+)/);
-            if (!tokenMatch) continue;
+            if (!tokenMatch) {
+                debugLog(`queryLsp: PID ${pid} missing csrf token in cmdLine`);
+                continue;
+            }
             const csrf = tokenMatch[1].replace(/['"]+/g, "").trim();
+            debugLog(`queryLsp: PID ${pid} token=${csrf}`);
             
             const ports = [];
-            if (isWin) {
+            if (proc.isWindowsProcess) {
                 try {
-                    const netstatOut = execSync('netstat -ano', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+                    const netstatCmd = process.platform === 'win32' ? 'netstat -ano' : 'netstat.exe -ano';
+                    const netstatOut = execSync(netstatCmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
                     netstatOut.split(/\r?\n/).forEach((l) => {
                         if (l.includes('LISTENING') && l.includes(String(pid))) {
                             const parts = l.trim().split(/\s+/);
@@ -350,7 +464,9 @@ async function queryLsp() {
                             }
                         }
                     });
-                } catch (e) {}
+                } catch (e) {
+                    debugLog(`queryLsp netstat.exe failed: ${e.message}`);
+                }
             } else {
                 let lsofOut = '';
                 try {
@@ -369,26 +485,31 @@ async function queryLsp() {
             }
             
             const uniquePorts = [...new Set(ports)];
+            debugLog(`queryLsp: PID ${pid} unique ports found: ${uniquePorts.join(',')}`);
             for (const port of uniquePorts) {
+                debugLog(`queryLsp: posting to port ${port}`);
                 const result = await postToLsp(port, csrf);
                 if (result) {
+                    debugLog(`queryLsp: success on port ${port}, email=${result.email}`);
                     return result;
+                } else {
+                    debugLog(`queryLsp: failed on port ${port}`);
                 }
             }
         }
     } catch (e) {
-        // Ignore errors
+        debugLog(`queryLsp outer error: ${e.message}`);
     }
     return null;
 }
 
-// Helper to get active model preference from SQLite DB
-function getActiveModelIdFromSqlite() {
+// Helper to get active model preference name from SQLite DB
+function getActiveModelNameFromSqlite() {
     try {
         const modelInfoRaw = runQueryModelInfo();
         if (modelInfoRaw) {
             const modelInfo = JSON.parse(modelInfoRaw);
-            return modelInfo.activeModelId;
+            return modelInfo.activeModel;
         }
     } catch (e) {}
     return null;
@@ -673,7 +794,10 @@ function formatCountdown(expirationSec) {
 
 // Update status bar item content based on current configuration and state
 function updateStatusBar() {
-    if (!statusBarItem) return;
+    if (!statusBarItem) {
+        debugLog("updateStatusBar: statusBarItem is null/undefined");
+        return;
+    }
     
     try {
         const isRemote = !!vscode.env.remoteName;
@@ -685,6 +809,7 @@ function updateStatusBar() {
             statusBarItem.tooltip = 'Antigravity Super Sentinel clicker is not injected. Click to install/enable.';
             statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
             statusBarItem.color = '#ef4444';
+            debugLog("updateStatusBar: NOT INSTALLED status");
         } else {
             const data = gatherSentinelData();
             const activeModel = data.activeModel || 'Gemini 3.5 Flash (High)';
@@ -695,6 +820,7 @@ function updateStatusBar() {
             const icon = state.enabled ? '$(eye)' : '$(circle-slash)';
             
             statusBarItem.text = `${icon} Kadzura Super Sentinel : ${statusLabel} | ${activeModel} ${quotaPct}% (${countdown})`;
+            debugLog(`updateStatusBar: text="${statusBarItem.text}"`);
             
             if (state.enabled) {
                 statusBarItem.backgroundColor = undefined; // Avoid using unsupported ThemeColor 'statusBarItem.remoteBackground'
@@ -708,16 +834,18 @@ function updateStatusBar() {
         }
         statusBarItem.show();
     } catch (err) {
+        debugLog(`updateStatusBar error: ${err.message}`);
         console.error('[Sentinel] Error in updateStatusBar:', err.message);
     }
 }
 
 // Unified synchronization function to update both the status bar and the active webview panel
 function syncOverwatchData() {
-    updateStatusBar();
-    if (sidebarProvider && sidebarProvider._view) {
-        try {
-            const data = gatherSentinelData();
+    try {
+        const data = gatherSentinelData();
+        debugLog(`syncOverwatchData: gathered activeModel=${data.activeModel}, email=${data.email}, modelsListCount=${data.modelsList.length}`);
+        updateStatusBar();
+        if (sidebarProvider && sidebarProvider._view) {
             if (sidebarProvider._view.visible) {
                 // Translate browser frame paths to Webview URIs
                 if (data.browserFrames.length > 0) {
@@ -725,14 +853,18 @@ function syncOverwatchData() {
                         return sidebarProvider._view.webview.asWebviewUri(vscode.Uri.file(f)).toString();
                     });
                 }
+                debugLog(`syncOverwatchData: posting to visible webview`);
                 sidebarProvider._view.webview.postMessage({
                     command: 'updateOverwatch',
                     data: data
                 });
+            } else {
+                debugLog(`syncOverwatchData: webview is not visible`);
             }
-        } catch (e) {
-            console.error('[Sentinel] Failed to sync overwatch data to webview:', e.message);
         }
+    } catch (e) {
+        debugLog(`syncOverwatchData error: ${e.message}`);
+        console.error('[Sentinel] Failed to sync overwatch data to webview:', e.message);
     }
 }
 
@@ -946,10 +1078,10 @@ function gatherSentinelData() {
             data.modelsList = cachedLspData.modelsList;
 
             let activeModelObj = null;
-            // 1. Prioritize SQLite database active model (comparing as strings to prevent type mismatch)
-            const sqliteActiveId = getActiveModelIdFromSqlite();
-            if (sqliteActiveId !== null && sqliteActiveId !== undefined) {
-                activeModelObj = cachedLspData.modelsList.find(m => String(m.id) === String(sqliteActiveId));
+            // 1. Prioritize SQLite database active model by name
+            const sqliteActiveName = getActiveModelNameFromSqlite();
+            if (sqliteActiveName) {
+                activeModelObj = cachedLspData.modelsList.find(m => m.name === sqliteActiveName);
             }
             // 2. Fall back to transcript's Model Selection event
             if (!activeModelObj && transcriptActiveModel) {
@@ -1221,6 +1353,7 @@ class SentinelViewProvider {
 
 // Extension Activation entry point
 function activate(context) {
+    debugLog("Extension activate() called");
     console.log('[Sentinel] Extension activated.');
 
     // Start LSP polling loop
@@ -1273,6 +1406,31 @@ function activate(context) {
 
     setupStateFileWatcher();
     setupDbWatcher();
+
+    // Poll status every 4 seconds in the background to ensure real-time status bar updates even under WSL Remote file watcher limitations
+    const bgPollInterval = setInterval(() => {
+        try {
+            syncOverwatchData();
+        } catch (e) {}
+    }, 4000);
+    context.subscriptions.push({ dispose: () => clearInterval(bgPollInterval) });
+
+    // Auto-dump configuration on startup (Experimental for debugging active model)
+    setTimeout(() => {
+        try {
+            const config = vscode.workspace.getConfiguration('antigravity');
+            const allKeys = Object.keys(config);
+            let output = "=== Antigravity Workspace Config Dump ===\n";
+            for (const key of allKeys) {
+                output += `${key} : ${JSON.stringify(config.get(key), null, 2)}\n`;
+            }
+            const fs = require('fs');
+            fs.writeFileSync('/tmp/antigravity_config_dump.txt', output);
+            vscode.window.showInformationMessage('[Sentinel] Config dumped to /tmp! Kadzura will read it automatically.');
+        } catch (e) {
+            console.error(e);
+        }
+    }, 5000);
 
     // Register Enable Command
     context.subscriptions.push(
@@ -1334,6 +1492,38 @@ function activate(context) {
 
             const message = nextEnabled ? 'Auto-Accept clicker is now ACTIVE.' : 'Auto-Accept clicker is now PAUSED.';
             vscode.window.setStatusBarMessage(`[Sentinel] ${message}`, 3000);
+        })
+    );
+
+    // Register Dump Config Command (Experimental for debugging active model)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('antigravity-super-sentinel.dumpConfig', () => {
+            const config = vscode.workspace.getConfiguration('antigravity');
+            const allKeys = Object.keys(config);
+            let output = "=== Antigravity Workspace Config Dump ===\n";
+            for (const key of allKeys) {
+                output += `${key} : ${JSON.stringify(config.get(key), null, 2)}\n`;
+            }
+            
+            const quotaConfig = vscode.workspace.getConfiguration('antigravity-quota');
+            output += "\n=== Antigravity Quota Config Dump ===\n";
+            for (const key of Object.keys(quotaConfig)) {
+                output += `${key} : ${JSON.stringify(quotaConfig.get(key), null, 2)}\n`;
+            }
+            
+            const ext = vscode.extensions.getExtension('google.antigravity');
+            output += `\ngoogle.antigravity Extension loaded: ${ext ? 'Yes' : 'No'}\n`;
+            if (ext) {
+                output += `isActive: ${ext.isActive}\n`;
+                if (ext.exports) {
+                    output += `exports keys: ${Object.keys(ext.exports).join(', ')}\n`;
+                }
+            }
+
+            const channel = vscode.window.createOutputChannel('Super Sentinel Config Dump');
+            channel.appendLine(output);
+            channel.show();
+            vscode.window.showInformationMessage('Config dumped! Check the Output panel.');
         })
     );
 

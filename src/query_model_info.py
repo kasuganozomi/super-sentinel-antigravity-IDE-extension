@@ -4,6 +4,8 @@ import json
 import sys
 import os
 import platform
+import shutil
+import tempfile
 
 def get_default_db_path():
     home = os.path.expanduser("~")
@@ -33,7 +35,17 @@ def get_default_db_path():
             
     return candidates[0]
 
-db_path = sys.argv[1] if len(sys.argv) > 1 else get_default_db_path()
+original_db_path = sys.argv[1] if len(sys.argv) > 1 else get_default_db_path()
+db_path = original_db_path
+temp_db_path = None
+if os.path.exists(original_db_path):
+    try:
+        fd, temp_db_path = tempfile.mkstemp(suffix='.vscdb')
+        os.close(fd)
+        shutil.copy2(original_db_path, temp_db_path)
+        db_path = temp_db_path
+    except Exception:
+        pass
 
 def parse_protobuf_varint(data, pos):
     val = 0
@@ -158,7 +170,9 @@ def get_active_model_id():
                                     if active_id is not None:
                                         return active_id
     except Exception:
-        return None
+        pass
+
+    return None
 
 
 def get_models_info():
@@ -303,26 +317,33 @@ def decode_bytes(obj):
     return obj
 
 def main():
-    active_id = get_active_model_id()
-    models = get_models_info()
-    
-    active_model = None
-    if active_id is not None:
-        for m in models:
-            if m["id"] == active_id:
-                active_model = m
-                break
-                
-    output = {
-        "activeModel": active_model["name"] if active_model else None,
-        "activeModelId": active_id,
-        "expiration": active_model["expiration"] if active_model else None,
-        "remainingFraction": active_model["remainingFraction"] if active_model else 0.0,
-        "models": models
-    }
-    
-    output = decode_bytes(output)
-    print(json.dumps(output))
+    try:
+        active_id = get_active_model_id()
+        models = get_models_info()
+        
+        active_model = None
+        if active_id is not None:
+            for m in models:
+                if m["id"] == active_id:
+                    active_model = m
+                    break
+                    
+        output = {
+            "activeModel": active_model["name"] if active_model else None,
+            "activeModelId": active_id,
+            "expiration": active_model["expiration"] if active_model else None,
+            "remainingFraction": active_model["remainingFraction"] if active_model else 0.0,
+            "models": models
+        }
+        
+        output = decode_bytes(output)
+        print(json.dumps(output))
+    finally:
+        if temp_db_path and os.path.exists(temp_db_path):
+            try:
+                os.remove(temp_db_path)
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     main()
