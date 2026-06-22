@@ -174,46 +174,107 @@ function tryHttpPost(port, csrf, cb) {
 // Scans PIDs, detects ports, updates cachedLspData
 async function queryLsp() {
     try {
-        let psOut = '';
-        try {
-            psOut = execSync('ps -ef | grep language_server | grep -v grep', { encoding: 'utf8' });
-        } catch (e) {
-            return null;
-        }
-        if (!psOut.trim()) return null;
-        
-        const lines = psOut.trim().split(/\r?\n/);
-        for (const line of lines) {
-            const parts = line.trim().split(/\s+/);
-            const pid = parts[1];
-            if (!pid || isNaN(Number(pid))) continue;
-            
-            const tokenMatch = line.match(/--csrf_token[\s=]+([^\s]+)/);
-            if (!tokenMatch) continue;
-            const csrf = tokenMatch[1].replace(/['"]+/g, "").trim();
-            
-            let lsofOut = '';
+        if (process.platform === 'win32') {
+            let cmdOut = '';
             try {
-                lsofOut = execSync(`lsof -nP -iTCP -sTCP:LISTEN -a -p ${pid}`, { encoding: 'utf8' });
+                cmdOut = execSync(`powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter 'Name like ''%language_server%''' | Select-Object ProcessId, CommandLine | ConvertTo-Json"`, { encoding: 'utf8' });
             } catch (e) {
-                try {
-                    lsofOut = execSync(`ss -lntp | grep "pid=${pid}," || true`, { encoding: 'utf8' });
-                } catch (e2) {}
+                return null;
             }
+            if (!cmdOut.trim()) return null;
+            let processes = [];
+            try {
+                processes = JSON.parse(cmdOut);
+                if (!Array.isArray(processes)) {
+                    processes = [processes];
+                }
+            } catch (e) {
+                return null;
+            }
+            for (const proc of processes) {
+                if (!proc || !proc.CommandLine || !proc.ProcessId) continue;
+                const cmdLine = proc.CommandLine;
+                const pid = proc.ProcessId;
+
+                const tokenMatch = cmdLine.match(/--csrf_token[\s=]+([^\s]+)/);
+                if (!tokenMatch) continue;
+                const csrf = tokenMatch[1].replace(/['"]+/g, "").trim();
+
+                let netstatOut = '';
+                try {
+                    netstatOut = execSync(`netstat -ano | findstr LISTENING | findstr ${pid}`, { encoding: 'utf8' });
+                } catch (e) {}
+
+                const ports = [];
+                if (netstatOut.trim()) {
+                    netstatOut.trim().split(/\r?\n/).forEach((l) => {
+                        const parts = l.trim().split(/\s+/);
+                        if (parts.length >= 2) {
+                            const localAddress = parts[1];
+                            const port = localAddress.substring(localAddress.lastIndexOf(':') + 1);
+                            if (port && !isNaN(Number(port))) {
+                                ports.push(port);
+                            }
+                        }
+                    });
+                }
+
+                const cmdPortMatch = cmdLine.match(/--extension_server_port[\s=]+([^\s]+)/);
+                if (cmdPortMatch) {
+                    ports.push(cmdPortMatch[1].replace(/['"]+/g, "").trim());
+                }
+
+                const uniquePorts = [...new Set(ports)];
+                for (const port of uniquePorts) {
+                    const result = await postToLsp(port, csrf);
+                    if (result) {
+                        return result;
+                    }
+                }
+            }
+            return null;
+        } else {
+            let psOut = '';
+            try {
+                psOut = execSync('ps -ef | grep language_server | grep -v grep', { encoding: 'utf8' });
+            } catch (e) {
+                return null;
+            }
+            if (!psOut.trim()) return null;
             
-            if (!lsofOut.trim()) continue;
-            
-            const ports = [];
-            lsofOut.trim().split(/\r?\n/).forEach((l) => {
-                const portMatch = l.match(/:(\d+)\s+/) || l.match(/127\.0\.0\.1:(\d+)/);
-                if (portMatch) ports.push(portMatch[1]);
-            });
-            
-            const uniquePorts = [...new Set(ports)];
-            for (const port of uniquePorts) {
-                const result = await postToLsp(port, csrf);
-                if (result) {
-                    return result;
+            const lines = psOut.trim().split(/\r?\n/);
+            for (const line of lines) {
+                const parts = line.trim().split(/\s+/);
+                const pid = parts[1];
+                if (!pid || isNaN(Number(pid))) continue;
+                
+                const tokenMatch = line.match(/--csrf_token[\s=]+([^\s]+)/);
+                if (!tokenMatch) continue;
+                const csrf = tokenMatch[1].replace(/['"]+/g, "").trim();
+                
+                let lsofOut = '';
+                try {
+                    lsofOut = execSync(`lsof -nP -iTCP -sTCP:LISTEN -a -p ${pid}`, { encoding: 'utf8' });
+                } catch (e) {
+                    try {
+                        lsofOut = execSync(`ss -lntp | grep "pid=${pid}," || true`, { encoding: 'utf8' });
+                    } catch (e2) {}
+                }
+                
+                if (!lsofOut.trim()) continue;
+                
+                const ports = [];
+                lsofOut.trim().split(/\r?\n/).forEach((l) => {
+                    const portMatch = l.match(/:(\d+)\s+/) || l.match(/127\.0\.0\.1:(\d+)/);
+                    if (portMatch) ports.push(portMatch[1]);
+                });
+                
+                const uniquePorts = [...new Set(ports)];
+                for (const port of uniquePorts) {
+                    const result = await postToLsp(port, csrf);
+                    if (result) {
+                        return result;
+                    }
                 }
             }
         }
@@ -227,7 +288,8 @@ async function queryLsp() {
 function getActiveModelIdFromSqlite() {
     try {
         const pythonScript = path.join(__dirname, 'query_model_info.py');
-        const modelInfoRaw = execSync(`python3 "${pythonScript}"`, { encoding: 'utf8' });
+        const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+        const modelInfoRaw = execSync(`${pythonCmd} "${pythonScript}"`, { encoding: 'utf8' });
         if (modelInfoRaw) {
             const modelInfo = JSON.parse(modelInfoRaw);
             return modelInfo.activeModelId;
@@ -472,6 +534,11 @@ function clearCodeCache() {
         const wslAppData = getWslWindowsAppData();
         if (wslAppData) {
             candidates.push(path.join(wslAppData, 'Antigravity IDE', 'Code Cache', 'js'));
+        }
+        
+        // Native Windows cache path
+        if (process.platform === 'win32' && process.env.APPDATA) {
+            candidates.push(path.join(process.env.APPDATA, 'Antigravity IDE', 'Code Cache', 'js'));
         }
         
         // Native Linux cache path
@@ -898,7 +965,8 @@ function gatherSentinelData() {
             // SQLite Fallback (e.g. if LSP is loading)
             try {
                 const pythonScript = path.join(__dirname, 'query_model_info.py');
-                const modelInfoRaw = execSync(`python3 "${pythonScript}"`, { encoding: 'utf8' });
+                const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+                const modelInfoRaw = execSync(`${pythonCmd} "${pythonScript}"`, { encoding: 'utf8' });
                 if (modelInfoRaw) {
                     const modelInfo = JSON.parse(modelInfoRaw);
                     if (modelInfo.activeModel && !transcriptActiveModel) {
@@ -988,7 +1056,8 @@ function gatherSentinelData() {
 
         // Scan Child Sessions (Sub-trajectories)
         const conversationsDir = path.join(homedir, '.gemini', 'antigravity-ide', 'conversations');
-        const agentapiPath = path.join(homedir, '.gemini', 'antigravity-ide', 'bin', 'agentapi');
+        const agentapiBinName = process.platform === 'win32' ? 'agentapi.bat' : 'agentapi';
+        const agentapiPath = path.join(homedir, '.gemini', 'antigravity-ide', 'bin', agentapiBinName);
         if (fs.existsSync(conversationsDir) && fs.existsSync(agentapiPath)) {
             const files = fs.readdirSync(conversationsDir);
             const dbFiles = files.filter(f => f.endsWith('.db') && !f.includes(data.sessionId));
