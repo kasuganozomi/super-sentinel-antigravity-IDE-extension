@@ -251,11 +251,52 @@ function writeFile(filePath, content) {
 function getWslWindowsLocalAppData() {
     try {
         if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) {
-            const out = execSync('/mnt/c/Windows/System32/cmd.exe /c "echo %LOCALAPPDATA%"', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-            if (out && out.match(/^[a-zA-Z]:\\/)) {
-                const drive = out[0].toLowerCase();
-                const remainder = out.substring(2).replace(/\\/g, '/');
-                return `/mnt/${drive}${remainder}`;
+            // 1. Try standard cmd.exe execution
+            try {
+                const out = execSync('/mnt/c/Windows/System32/cmd.exe /c "echo %LOCALAPPDATA%"', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+                if (out && out.match(/^[a-zA-Z]:\\/)) {
+                    const drive = out[0].toLowerCase();
+                    const remainder = out.substring(2).replace(/\\/g, '/');
+                    return `/mnt/${drive}${remainder}`;
+                }
+            } catch (cmdErr) {}
+
+            // 2. Try parsing process.env.PATH
+            const paths = (process.env.PATH || '').split(':');
+            for (const p of paths) {
+                const match = p.match(/\/mnt\/([a-zA-Z])\/Users\/([^\/]+)\/AppData\/Local/i);
+                if (match) {
+                    const drive = match[1].toLowerCase();
+                    const user = match[2];
+                    const localAppData = `/mnt/${drive}/Users/${user}/AppData/Local`;
+                    if (fs.existsSync(localAppData)) {
+                        return localAppData;
+                    }
+                }
+            }
+
+            // 3. Scan /mnt/c/Users/ (or other mounted drives if any)
+            const drives = ['c', 'd', 'e'];
+            for (const d of drives) {
+                const usersDir = `/mnt/${d}/Users`;
+                if (fs.existsSync(usersDir)) {
+                    const users = fs.readdirSync(usersDir);
+                    for (const u of users) {
+                        if (['Public', 'All Users', 'Default', 'Default User', 'desktop.ini'].includes(u)) continue;
+                        const localAppData = path.join(usersDir, u, 'AppData', 'Local');
+                        if (fs.existsSync(path.join(localAppData, 'Programs', 'Antigravity IDE'))) {
+                            return localAppData;
+                        }
+                    }
+                    // Fallback to any valid AppData/Local if specific IDE folder not found yet
+                    for (const u of users) {
+                        if (['Public', 'All Users', 'Default', 'Default User', 'desktop.ini'].includes(u)) continue;
+                        const localAppData = path.join(usersDir, u, 'AppData', 'Local');
+                        if (fs.existsSync(localAppData)) {
+                            return localAppData;
+                        }
+                    }
+                }
             }
         }
     } catch (e) {}
@@ -266,11 +307,51 @@ function getWslWindowsLocalAppData() {
 function getWslWindowsAppData() {
     try {
         if (process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP) {
-            const out = execSync('/mnt/c/Windows/System32/cmd.exe /c "echo %APPDATA%"', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-            if (out && out.match(/^[a-zA-Z]:\\/)) {
-                const drive = out[0].toLowerCase();
-                const remainder = out.substring(2).replace(/\\/g, '/');
-                return `/mnt/${drive}${remainder}`;
+            // 1. Try standard cmd.exe execution
+            try {
+                const out = execSync('/mnt/c/Windows/System32/cmd.exe /c "echo %APPDATA%"', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+                if (out && out.match(/^[a-zA-Z]:\\/)) {
+                    const drive = out[0].toLowerCase();
+                    const remainder = out.substring(2).replace(/\\/g, '/');
+                    return `/mnt/${drive}${remainder}`;
+                }
+            } catch (cmdErr) {}
+
+            // 2. Try parsing process.env.PATH
+            const paths = (process.env.PATH || '').split(':');
+            for (const p of paths) {
+                const match = p.match(/\/mnt\/([a-zA-Z])\/Users\/([^\/]+)\/AppData\/Local/i);
+                if (match) {
+                    const drive = match[1].toLowerCase();
+                    const user = match[2];
+                    const appData = `/mnt/${drive}/Users/${user}/AppData/Roaming`;
+                    if (fs.existsSync(appData)) {
+                        return appData;
+                    }
+                }
+            }
+
+            // 3. Scan /mnt/c/Users/
+            const drives = ['c', 'd', 'e'];
+            for (const d of drives) {
+                const usersDir = `/mnt/${d}/Users`;
+                if (fs.existsSync(usersDir)) {
+                    const users = fs.readdirSync(usersDir);
+                    for (const u of users) {
+                        if (['Public', 'All Users', 'Default', 'Default User', 'desktop.ini'].includes(u)) continue;
+                        const appData = path.join(usersDir, u, 'AppData', 'Roaming');
+                        if (fs.existsSync(path.join(appData, 'Antigravity IDE'))) {
+                            return appData;
+                        }
+                    }
+                    for (const u of users) {
+                        if (['Public', 'All Users', 'Default', 'Default User', 'desktop.ini'].includes(u)) continue;
+                        const appData = path.join(usersDir, u, 'AppData', 'Roaming');
+                        if (fs.existsSync(appData)) {
+                            return appData;
+                        }
+                    }
+                }
             }
         }
     } catch (e) {}
@@ -286,6 +367,7 @@ function getWorkbenchPath() {
     if (wslLocalAppData) {
         candidates.push(path.join(wslLocalAppData, 'Programs', 'Antigravity IDE', 'resources', 'app', 'out', 'vs', 'code', 'electron-browser', 'workbench', 'workbench.html'));
         candidates.push(path.join(wslLocalAppData, 'Programs', 'Antigravity IDE', 'resources', 'app', 'out', 'vs', 'code', 'electron-sandbox', 'workbench', 'workbench.html'));
+        candidates.push(path.join(wslLocalAppData, 'Programs', 'Antigravity IDE', 'resources', 'app', 'out', 'vs', 'workbench', 'workbench.html'));
     }
 
     const appRoot = vscode.env.appRoot;
@@ -293,6 +375,13 @@ function getWorkbenchPath() {
         path.join(appRoot, 'out', 'vs', 'code', 'electron-browser', 'workbench', 'workbench.html'),
         path.join(appRoot, 'out', 'vs', 'code', 'electron-sandbox', 'workbench', 'workbench.html'),
         path.join(appRoot, 'out', 'vs', 'workbench', 'workbench.html')
+    );
+
+    // Linux native paths
+    candidates.push(
+        '/opt/antigravity-ide/resources/app/out/vs/code/electron-browser/workbench/workbench.html',
+        '/opt/antigravity-ide/resources/app/out/vs/code/electron-sandbox/workbench/workbench.html',
+        '/opt/antigravity-ide/resources/app/out/vs/workbench/workbench.html'
     );
 
     for (const p of candidates) {
@@ -316,6 +405,9 @@ function getProductJsonPath() {
     }
     const appRoot = vscode.env.appRoot;
     candidates.push(path.join(appRoot, 'product.json'));
+
+    // Linux native path
+    candidates.push('/opt/antigravity-ide/resources/app/product.json');
 
     for (const p of candidates) {
         if (fs.existsSync(p)) return p;
@@ -469,10 +561,14 @@ function writeState(state) {
 }
 
 // Inject script references into workbench.html
-function injectScript(context) {
+function injectScript(context, silent = false) {
     const wbPath = getWorkbenchPath();
     if (!wbPath) {
-        vscode.window.showErrorMessage('[Sentinel] workbench.html not found!');
+        if (!silent) {
+            vscode.window.showErrorMessage('[Sentinel] workbench.html not found!');
+        } else {
+            console.warn('[Sentinel] Auto-inject failed: workbench.html not found.');
+        }
         return false;
     }
 
@@ -516,7 +612,11 @@ function injectScript(context) {
 
         return true;
     } catch (e) {
-        vscode.window.showErrorMessage(`[Sentinel] Injection failed: ${e.message}`);
+        if (!silent) {
+            vscode.window.showErrorMessage(`[Sentinel] Injection failed: ${e.message}`);
+        } else {
+            console.warn(`[Sentinel] Auto-inject failed: ${e.message}`);
+        }
         return false;
     }
 }
@@ -586,19 +686,20 @@ function formatCountdown(expirationSec) {
 function updateStatusBar() {
     if (!statusBarItem) return;
     const wbPath = getWorkbenchPath();
-    if (!wbPath) {
-        statusBarItem.hide();
-        return;
-    }
 
     const state = readState();
-    const injected = isScriptInjected();
+    const injected = wbPath ? isScriptInjected() : false;
     const data = gatherSentinelData();
     const activeModel = data.activeModel || 'Gemini 3.5 Flash (High)';
     const quotaPct = Math.round((data.activeModelRemainingFraction || 0.0) * 100);
     const countdown = formatCountdown(data.activeModelExpiration);
 
-    if (!injected) {
+    if (!wbPath) {
+        statusBarItem.text = `$(circle-slash) Kadzura Super Sentinel : NO UI ACCESS | ${activeModel} ${quotaPct}% (${countdown})`;
+        statusBarItem.tooltip = `Antigravity Super Sentinel clicker cannot locate workbench.html.\nActive Model: ${activeModel}\nQuota Remaining: ${quotaPct}%\nReset in: ${countdown}\nTelemetry is active, but auto-clicker is disabled.`;
+        statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+        statusBarItem.color = '#fbbf24';
+    } else if (!injected) {
         statusBarItem.text = `$(circle-slash) Kadzura Super Sentinel : NOT INSTALLED | ${activeModel} ${quotaPct}% (${countdown})`;
         statusBarItem.tooltip = `Antigravity Super Sentinel clicker is not injected.\nActive Model: ${activeModel}\nQuota Remaining: ${quotaPct}%\nReset in: ${countdown}\nClick to install/enable.`;
         statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
@@ -1044,7 +1145,7 @@ function activate(context) {
     // Auto-inject script on startup if not already injected
     if (!isScriptInjected()) {
         console.log('[Sentinel] Script not found in workbench.html, executing auto-inject...');
-        const success = injectScript(context);
+        const success = injectScript(context, true);
         if (success) {
             clearCodeCache();
             updateChecksums();
@@ -1065,7 +1166,7 @@ function activate(context) {
     // Register Enable Command
     context.subscriptions.push(
         vscode.commands.registerCommand('antigravity-super-sentinel.enable', async () => {
-            const success = injectScript(context);
+            const success = injectScript(context, false);
             if (success) {
                 clearCodeCache();
                 updateChecksums();

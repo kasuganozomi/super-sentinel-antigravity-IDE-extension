@@ -1,7 +1,0 @@
-kadzura-super-sentinel-logo.png
-kadzura-super-sentinel-logo.png:Zone.Identifier
-.vscodeignore
-**/*.pyc
-**/*.map
-**/__pycache__
-src/__pycache__

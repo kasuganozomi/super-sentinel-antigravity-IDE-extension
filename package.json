@@ -2,7 +2,7 @@
 	"name": "antigravity-super-sentinel",
 	"displayName": "Antigravity Super Sentinel",
 	"description": "Agents Utility Dashboard for Google Antigravity IDE",
-	"version": "2.1.1",
+	"version": "2.1.2",
 	"publisher": "IKadzura",
 	"license": "MIT",
 	"icon": "media/icon.png",
@@ -79,5 +79,10 @@
 				}
 			}
 		}
+	},
+	"__metadata": {
+		"installedTimestamp": 1782116571458,
+		"targetPlatform": "undefined",
+		"size": 1743387
 	}
 }
