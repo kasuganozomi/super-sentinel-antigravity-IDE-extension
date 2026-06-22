@@ -1,127 +1,107 @@
-# 🛸 Antigravity Super Sentinel
+# Antigravity Super Sentinel
 
-<div align="center">
-
-[![Author](https://img.shields.io/badge/AUTHOR-IKADZURA-a855f7?style=for-the-badge&logo=github&logoColor=white)](https://github.com/kasuganozomi)
-[![Style](https://img.shields.io/badge/STYLE-KADZURA%20STANDARD-f472b6?style=for-the-badge)](#🎨-style-philosophy)
-[![Security](https://img.shields.io/badge/SECURITY-100%25%20LOCAL-10b981?style=for-the-badge)](#🚀-features)
-[![Platform](https://img.shields.io/badge/PLATFORM-ANTIGRAVITY%20IDE-2563eb?style=for-the-badge)](#🛠️-prerequisites)
-
-**An ultra-premium agents monitoring utility dashboard for Google Antigravity IDE.**
-
-*Crafted by Kadzura with absolute architectural precision and sleek glassmorphic aesthetics.*
+<p align="center">
+  <img src="https://img.shields.io/badge/version-2.1.1-purple.svg?style=for-the-badge&logo=visual-studio-code" alt="Version" />
+  <img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20WSL-blue.svg?style=for-the-badge" alt="Platform" />
+  <img src="https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge" alt="License" />
+  <img src="https://img.shields.io/badge/Built%20For-Antigravity%20IDE-orange.svg?style=for-the-badge" alt="Built For" />
+</p>
 
 ---
 
-</div>
+## 🔮 Overview
 
-## 📖 Overview
-
-**Antigravity Super Sentinel** is a luxurious, real-time analytics suite and permission-bypass clicker designed exclusively for the **Antigravity IDE**. It provides live model quota tracking, automated approval prompt bypasses, and multi-session telemetry visualization in a cyberpunk-themed interface.
+**Antigravity Super Sentinel** is an ultra-premium agent dashboard utility designed specifically for the **Google Antigravity IDE**. Engineered to deliver a highly precise, luxurious developer dashboard and bypass validation bottlenecks, this extension provides direct telemetry metrics, auto-approval configurations, and seamless workflow automation.
 
 ---
 
-## 🎨 Style Philosophy
+## ✨ Features
 
-- **Interface Aesthetics**: Designed to comply with the strict *Kadzura Standard of Excellence*. Features clean grid alignments, rich neon gradients, deep-dark glassmorphism, and smooth micro-animations.
-
----
-
-## 🚀 Features
-
-- **⚡ Zero-Lag Telemetry**: Instantly query local Go Language Server (LSP) memory to track active models, remaining quotas, and reset countdowns.
-- **🦾 Smart Auto-Clicker**: Bypass safety prompts immediately via direct script injection into the main workbench framework, eliminating approval latency.
-- **📊 Unified Status Bar Indicator**: A highly visible status bar pill displaying active model, remaining quota fractions, and relative reset countdowns.
-- **💻 Deep-Dark Dashboard**: Access detailed step hierarchies, active skills registries, MCP configurations, and token usage estimates inside a dedicated sidebar panel.
+*   **⚡ Zero-Lag Live Quota Telemetry**: Direct memory scanning of local Go Language Server (LSP) telemetry data (active models list, remaining quotas, and reset times).
+*   **🤖 Auto-Approvals (Smart Clicker)**: Automatic prompt bypass injection directly into the IDE's main workbench window, avoiding confirmation delays.
+*   **📊 Multi-Account Analytics Dashboard**: Premium sidebar showing session stats, token usage progress gauges, and detailed model quotas.
+*   **🎨 Vibrant Status Bar Indicator**: Unified bottom-left status bar pill displaying active/paused state, active model, remaining quota percentage, and the countdown until reset.
 
 ---
 
-## 🌐 Supported OS & Platforms
+## 💻 Supported Environments
 
-The Sentinel suite is engineered to run seamlessly across local and remote developer environments:
-
-| Platform | Telemetry Strategy | Host Execution Scope |
-| :--- | :--- | :--- |
-| ![Linux Native](https://img.shields.io/badge/Linux_Native-Supported-e11d48?style=flat-square&logo=linux) | Direct socket memory parsing & file system transcripts scanning. | Native Local |
-| ![Windows Native](https://img.shields.io/badge/Windows_Native-Supported-0078d4?style=flat-square&logo=windows) | PowerShell process query, netstat scanner, and SQLite queries. | Native Local |
-| ![WSL Remote](https://img.shields.io/badge/WSL_Remote-Supported-3b82f6?style=flat-square&logo=linux) | Remote telemetry loop inside WSL mapped to local Windows AppData. | Windows-to-WSL Bridge |
+| Platform | Extension Host OS | Client UI OS | Auto-Clicker Injection Target | Required Setup |
+| :--- | :--- | :--- | :--- | :--- |
+| **🐧 Linux Native** | Linux (e.g. Arch) | Linux (Native) | `/opt/antigravity-ide/resources/app/out/...` | Requires directory ownership |
+| **🪟 Windows Native** | Windows | Windows (Native) | `%LOCALAPPDATA%/Programs/Antigravity IDE/...` | None (Automatic) |
+| **🌐 WSL Remote** | Linux (WSL) | Windows (WSL Client) | `/mnt/c/Users/<user>/AppData/Local/Programs/Antigravity IDE/...` | None (Automatic via WSL mount) |
 
 ---
 
-## 🛠️ Prerequisites
+## ⚙️ Prerequisites & Setup Guide
 
-Ensure these dependencies are configured in your development environment:
+Ensure the following prerequisites are installed based on your target system:
 
-### Linux Native / WSL Remote
-- ![Python 3](https://img.shields.io/badge/Python-3-3776AB?style=flat-square&logo=python&logoColor=white) — Used to decode protobuf preference stores.
-- ![lsof](https://img.shields.io/badge/lsof-required-purple?style=flat-square) or ![ss](https://img.shields.io/badge/ss-fallback-blue?style=flat-square) — Used for telemetry port resolution.
-- Command to install:
-  ```bash
-  # Arch Linux
-  sudo pacman -S python lsof
-  # Ubuntu / Debian
-  sudo apt update && sudo apt install python3 lsof
-  ```
+### 1. General Requirements
+*   **Python 3** must be installed (used to run fallback database queries).
+*   **lsof** utility (required on Linux/WSL for active LSP port scanning).
 
-### Windows Native
-- ![Python 3](https://img.shields.io/badge/Python-3-3776AB?style=flat-square&logo=python&logoColor=white) — Verify "Add Python to PATH" is checked during setup.
+### 2. Environment Specific Installation Steps
 
----
+#### 🐧 Linux Native
+1. Install `lsof` tool via your package manager:
+   ```bash
+   sudo pacman -S lsof   # Arch Linux
+   sudo apt install lsof # Debian/Ubuntu
+   ```
+2. Grant write permissions to the IDE installation directory so the clicker script can be injected:
+   ```bash
+   sudo chown -R $USER:$USER /opt/antigravity-ide
+   ```
 
-## 📁 Source of Truth & Directory Mapping
+#### 🪟 Windows Native
+1. Ensure Python 3 is installed and added to your system environment variables (`PATH`).
+2. No extra commands are needed! The IDE installs directly into your user's AppData directory (`%LOCALAPPDATA%\Programs\Antigravity IDE`), allowing the extension to handle setup automatically.
 
-To prevent filesystem cross-contamination, the Sentinel parses folders relative to the active extension host context:
-
-### 1. ![Windows Native](https://img.shields.io/badge/MODE-WINDOWS_NATIVE-0078d4?style=for-the-badge&logo=windows)
-* **Execution Host**: Local Windows Extension Host.
-* **Paths & Directories**:
-  * **Skills Registry**: `C:\Users\<Windows-User>\.gemini\config\skills\`
-  * **Session Transcripts**: `C:\Users\<Windows-User>\.gemini\antigravity-ide\brain\`
-  * **Settings SQLite Database**: `%APPDATA%\Antigravity IDE\User\globalStorage\state.vscdb`
-* **How to Run**:
-  1. Open Antigravity IDE on Windows.
-  2. Install the compiled `.vsix` file.
-
-### 2. ![WSL Remote](https://img.shields.io/badge/MODE-WSL_REMOTE-3b82f6?style=for-the-badge&logo=linux)
-* **Execution Host**: Remote WSL/Linux Extension Host.
-* **Paths & Directories**:
-  * **Skills Registry**: `/home/<Linux-User>/.gemini/config/skills/` *(Inside WSL)*
-  * **Session Transcripts**: `/home/<Linux-User>/.gemini/antigravity-ide/brain/` *(Inside WSL)*
-  * **Settings SQLite Database**: `/home/<Linux-User>/.antigravity-ide-server/data/User/globalStorage/state.vscdb` *(Dynamically maps to the Windows client)*
-* **How to Run**:
-  1. Open your workspace inside a Remote WSL window in Antigravity IDE.
-  2. Install the `.vsix` directly within the remote connection.
-
-### 3. ![Linux Native](https://img.shields.io/badge/MODE-LINUX_NATIVE-e11d48?style=for-the-badge&logo=linux)
-* **Execution Host**: Local Linux Extension Host.
-* **Paths & Directories**:
-  * **Skills Registry**: `/home/<Linux-User>/.gemini/config/skills/`
-  * **Session Transcripts**: `/home/<Linux-User>/.gemini/antigravity-ide/brain/`
-  * **Settings SQLite Database**: `/home/<Linux-User>/.config/Antigravity IDE/User/globalStorage/state.vscdb`
-* **How to Run**:
-  1. Open Antigravity IDE on Linux.
-  2. Install the compiled `.vsix` file.
+#### 🌐 Windows via WSL (Remote - WSL)
+1. Ensure Python 3 is installed inside your WSL instance.
+2. The extension dynamically detects the WSL environment and automatically injects the clicker script into your Windows host's AppData path (`/mnt/c/Users/<user>/AppData/...`).
+3. No manual folder ownership commands are required.
 
 ---
 
-## ⚠️ Important Reminders & Troubleshooting
+## 🛠️ Custom Skills Configuration
 
-### ⚠️ CRITICAL PATH REMINDER
-> [!WARNING]
-> **Active Environment Skills Mapping Warning:**
-> 
-> Because file scanning is executed by the active Extension Host, the extension looks for configurations inside the OS where the host runs:
-> - If you are in **WSL Remote mode**, the Sentinel scans folders inside your remote WSL instance (`/home/<Linux-User>/.gemini/config/skills/`), **NOT** your Windows host files.
-> - Skills located in the Windows `.gemini` folder **will not show up** while in a WSL remote session. Make sure to sync your skills and config files to the active environment's `.gemini` directory!
+The extension scans for custom agent skills to display in the sidebar analytics. Place your custom skill folders in the paths listed below based on your active OS:
 
-### ![Troubleshoot](https://img.shields.io/badge/TROUBLESHOOT-workbench.html_not_found-yellow?style=for-the-badge&logo=alert)
-> [!NOTE]
-> **Why am I seeing `[Sentinel] workbench.html not found!` in WSL / Remote mode?**
-> 
-> In remote WSL/SSH architectures, the graphical user interface (`workbench.html`) is located on your local Windows machine while the extension's execution code runs on the remote headless server. Because the headless server contains no visual layout files, auto-clicker script injection is automatically skipped to prevent warnings.
-> 
-> **Resolution**: This warning is expected and completely safe to ignore. The status bar pill and live telemetry dashboard will function fully.
+*   **🐧 Linux Native**: `~/.gemini/config/skills/`
+*   **🪟 Windows Native**: `C:\Users\<user>\.gemini\config\skills\`
+*   **🌐 WSL Remote**: `/home/<wsl-user>/.gemini/config/skills/` *(Place them inside the WSL filesystem)*
 
-### ![Terminology](https://img.shields.io/badge/TERMINOLOGY-Workspace_Extension-blue?style=for-the-badge)
-> [!IMPORTANT]
-> The `"extensionKind": ["workspace"]` flag in `package.json` is a standard internal configuration of the extension framework. It does **not** limit the tool to a single local workspace folder; rather, it directs the IDE to run the extension host on the remote machine (where server logs and telemetry exist) instead of the local UI client.
+### Skill Folder Directory Structure
+To be detected correctly, your skill must follow this layout:
+```text
+.gemini/
+└── config/
+    └── skills/
+        └── my-custom-skill-folder/
+            ├── SKILL.md        <-- Must contain name and description in frontmatter
+            └── scripts/        <-- (Optional helper scripts)
+```
+
+#### Example `SKILL.md` Frontmatter:
+```markdown
+---
+name: My Custom Agent Skill
+description: Executing advanced code refactoring pipelines with precision.
+---
+# Instructions
+Detail your skill's instructions here...
+```
+
+---
+
+## 🎨 Technology Stack
+
+*   **Extension Core**: Node.js & VS Code Extension API.
+*   **Dashboard UI**: HTML, JS, and CSS with deep-dark glassmorphism, featuring a cyberpunk purple-pink theme.
+*   **LSP Telemetry**: Process memory query via local HTTPS Basic Auth.
+
+---
+*Crafted by Kadzura with absolute precision and premium design metrics.*

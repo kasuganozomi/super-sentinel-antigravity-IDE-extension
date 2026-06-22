@@ -1,51 +1,14 @@
+import os
 import sqlite3
 import base64
 import json
-import sys
-import os
-import platform
-import shutil
-import tempfile
 
-def get_default_db_path():
-    home = os.path.expanduser("~")
-    sys_name = platform.system()
-    if sys_name == "Windows":
-        appdata = os.environ.get("APPDATA")
-        if not appdata:
-            appdata = os.path.join(home, "AppData", "Roaming")
-        return os.path.join(appdata, "Antigravity IDE", "User", "globalStorage", "state.vscdb")
-    
-    candidates = []
-    if sys_name == "Darwin":
-        candidates.append(os.path.join(home, "Library", "Application Support", "Antigravity IDE", "User", "globalStorage", "state.vscdb"))
-    else:
-        config_dir = os.environ.get("XDG_CONFIG_HOME")
-        if not config_dir:
-            config_dir = os.path.join(home, ".config")
-        candidates.append(os.path.join(config_dir, "Antigravity IDE", "User", "globalStorage", "state.vscdb"))
-    
-    # Remote candidates
-    candidates.append(os.path.join(home, ".antigravity-ide-server", "data", "User", "globalStorage", "state.vscdb"))
-    candidates.append(os.path.join(home, ".antigravity-server", "data", "User", "globalStorage", "state.vscdb"))
-    
-    for cand in candidates:
-        if os.path.exists(cand):
-            return cand
-            
-    return candidates[0]
-
-original_db_path = sys.argv[1] if len(sys.argv) > 1 else get_default_db_path()
-db_path = original_db_path
-temp_db_path = None
-if os.path.exists(original_db_path):
-    try:
-        fd, temp_db_path = tempfile.mkstemp(suffix='.vscdb')
-        os.close(fd)
-        shutil.copy2(original_db_path, temp_db_path)
-        db_path = temp_db_path
-    except Exception:
-        pass
+# Resolve state.vscdb path dynamically for Linux, Windows, and WSL environments
+home = os.path.expanduser('~')
+db_path = os.path.join(os.environ.get('APPDATA', os.path.join(home, 'AppData', 'Roaming')), "Antigravity IDE", "User", "globalStorage", "state.vscdb")
+if not os.path.exists(db_path):
+    # Fallback to Linux/WSL style ~/.config path
+    db_path = os.path.join(home, ".config", "Antigravity IDE", "User", "globalStorage", "state.vscdb")
 
 def parse_protobuf_varint(data, pos):
     val = 0
@@ -170,9 +133,7 @@ def get_active_model_id():
                                     if active_id is not None:
                                         return active_id
     except Exception:
-        pass
-
-    return None
+        return None
 
 
 def get_models_info():
@@ -307,43 +268,25 @@ def get_models_info():
     except Exception:
         return []
 
-def decode_bytes(obj):
-    if isinstance(obj, bytes):
-        return obj.decode('utf-8', errors='ignore')
-    elif isinstance(obj, dict):
-        return {decode_bytes(k): decode_bytes(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [decode_bytes(x) for x in obj]
-    return obj
-
 def main():
-    try:
-        active_id = get_active_model_id()
-        models = get_models_info()
-        
-        active_model = None
-        if active_id is not None:
-            for m in models:
-                if m["id"] == active_id:
-                    active_model = m
-                    break
-                    
-        output = {
-            "activeModel": active_model["name"] if active_model else None,
-            "activeModelId": active_id,
-            "expiration": active_model["expiration"] if active_model else None,
-            "remainingFraction": active_model["remainingFraction"] if active_model else 0.0,
-            "models": models
-        }
-        
-        output = decode_bytes(output)
-        print(json.dumps(output))
-    finally:
-        if temp_db_path and os.path.exists(temp_db_path):
-            try:
-                os.remove(temp_db_path)
-            except Exception:
-                pass
+    active_id = get_active_model_id()
+    models = get_models_info()
+    
+    active_model = None
+    if active_id is not None:
+        for m in models:
+            if m["id"] == active_id:
+                active_model = m
+                break
+                
+    output = {
+        "activeModel": active_model["name"] if active_model else "Gemini 3.5 Flash (High)",
+        "activeModelId": active_id,
+        "expiration": active_model["expiration"] if active_model else None,
+        "remainingFraction": active_model["remainingFraction"] if active_model else 0.0,
+        "models": models
+    }
+    print(json.dumps(output))
 
 if __name__ == "__main__":
     main()

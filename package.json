@@ -2,7 +2,7 @@
 	"name": "antigravity-super-sentinel",
 	"displayName": "Antigravity Super Sentinel",
 	"description": "Agents Utility Dashboard for Google Antigravity IDE",
-	"version": "2.0.0",
+	"version": "2.1.1",
 	"publisher": "IKadzura",
 	"license": "MIT",
 	"icon": "media/icon.png",
@@ -42,8 +42,7 @@
 				{
 					"type": "webview",
 					"id": "antigravity-super-sentinel-view",
-					"name": "Sentinel Dashboard",
-					"icon": "media/icon.svg"
+					"name": "Sentinel Dashboard"
 				}
 			]
 		},
@@ -63,10 +62,6 @@
 			{
 				"command": "antigravity-super-sentinel.openSettings",
 				"title": "Antigravity Super Sentinel: Open Dashboard"
-			},
-			{
-				"command": "antigravity-super-sentinel.dumpConfig",
-				"title": "Antigravity Super Sentinel: Dump Config (Debug Active Model)"
 			}
 		],
 		"configuration": {
