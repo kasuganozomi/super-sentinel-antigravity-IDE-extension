@@ -169,43 +169,204 @@ function tryHttpPost(port, csrf, cb) {
     req.end();
 }
 
+// Dynamic app config directory path resolver based on platform
+function getAppConfigDir() {
+    const os = require('os');
+    const home = os.homedir();
+    if (process.platform === 'win32') {
+        const appdata = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+        return path.join(appdata, 'Antigravity IDE');
+    } else if (process.platform === 'darwin') {
+        return path.join(home, 'Library', 'Application Support', 'Antigravity IDE');
+    } else {
+        const configDir = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
+        return path.join(configDir, 'Antigravity IDE');
+    }
+}
+
+// Get Windows APPDATA path if running inside WSL environment
+function getWindowsAppDataFromWsl() {
+    try {
+        const raw = execSync('cmd.exe /c "echo %APPDATA%"', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+        const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        if (lines.length > 0) {
+            const winPath = lines[lines.length - 1];
+            if (/^[a-zA-Z]:\\/.test(winPath)) {
+                const wslPath = execSync(`wslpath -u "${winPath}"`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+                if (wslPath && fs.existsSync(wslPath)) {
+                    return wslPath;
+                }
+            }
+        }
+    } catch (e) {
+        // Ignore error
+    }
+    return null;
+}
+
+// Get the path of state.vscdb
+function getDbPath() {
+    const os = require('os');
+    const home = os.homedir();
+    
+    if (process.platform === 'win32') {
+        const appdata = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+        return path.join(appdata, 'Antigravity IDE', 'User', 'globalStorage', 'state.vscdb');
+    }
+    
+    // Linux/macOS candidates
+    const candidates = [];
+    
+    // Add Windows candidates if running in WSL
+    if (process.platform === 'linux') {
+        const winAppData = getWindowsAppDataFromWsl();
+        if (winAppData) {
+            candidates.push(path.join(winAppData, 'Antigravity IDE', 'User', 'globalStorage', 'state.vscdb'));
+        }
+    }
+    
+    if (process.platform === 'darwin') {
+        candidates.push(path.join(home, 'Library', 'Application Support', 'Antigravity IDE', 'User', 'globalStorage', 'state.vscdb'));
+    } else {
+        // Linux desktop
+        const configDir = process.env.XDG_CONFIG_HOME || path.join(home, '.config');
+        candidates.push(path.join(configDir, 'Antigravity IDE', 'User', 'globalStorage', 'state.vscdb'));
+    }
+    
+    // Remote server candidates (for WSL / SSH remote hosts)
+    candidates.push(path.join(home, '.antigravity-ide-server', 'data', 'User', 'globalStorage', 'state.vscdb'));
+    candidates.push(path.join(home, '.antigravity-server', 'data', 'User', 'globalStorage', 'state.vscdb'));
+    
+    // Find first that exists
+    for (const cand of candidates) {
+        if (fs.existsSync(cand)) {
+            return cand;
+        }
+    }
+    
+    // Fallback to first desktop candidate
+    return candidates[0];
+}
+
+// Robust runner for the query_model_info.py script passing dynamic DB path
+function runQueryModelInfo() {
+    try {
+        const pythonScript = path.join(__dirname, 'query_model_info.py');
+        const dbPath = getDbPath();
+        const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+        const modelInfoRaw = execSync(`"${pythonCmd}" "${pythonScript}" "${dbPath}"`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+        return modelInfoRaw;
+    } catch (e) {
+        if (process.platform === 'win32') {
+            const fallbacks = ['python3', 'py'];
+            for (const cmd of fallbacks) {
+                try {
+                    const pythonScript = path.join(__dirname, 'query_model_info.py');
+                    const dbPath = getDbPath();
+                    const modelInfoRaw = execSync(`"${cmd}" "${pythonScript}" "${dbPath}"`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+                    return modelInfoRaw;
+                } catch (e2) {}
+            }
+        }
+    }
+    return null;
+}
+
 // Scans PIDs, detects ports, updates cachedLspData
 async function queryLsp() {
     try {
-        let psOut = '';
-        try {
-            psOut = execSync('ps -ef | grep language_server | grep -v grep', { encoding: 'utf8' });
-        } catch (e) {
-            return null;
-        }
-        if (!psOut.trim()) return null;
+        let processes = [];
+        const isWin = process.platform === 'win32';
         
-        const lines = psOut.trim().split(/\r?\n/);
-        for (const line of lines) {
-            const parts = line.trim().split(/\s+/);
-            const pid = parts[1];
+        if (isWin) {
+            try {
+                // Command to list process details in JSON on Windows using PowerShell
+                const cmd = 'powershell -Command "Get-CimInstance Win32_Process -Filter \\"Name LIKE \'%language_server%\'\\" | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress"';
+                const psOut = execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+                if (psOut.trim()) {
+                    const parsed = JSON.parse(psOut);
+                    if (parsed) {
+                        processes = Array.isArray(parsed) ? parsed : [parsed];
+                    }
+                }
+            } catch (e) {
+                // Fallback using older gwmi command
+                try {
+                    const cmd = 'powershell -Command "Get-WmiObject Win32_Process -Filter \\"Name LIKE \'%language_server%\'\\" | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress"';
+                    const psOut = execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+                    if (psOut.trim()) {
+                        const parsed = JSON.parse(psOut);
+                        if (parsed) {
+                            processes = Array.isArray(parsed) ? parsed : [parsed];
+                        }
+                    }
+                } catch (e2) {}
+            }
+        } else {
+            // Linux/macOS
+            let psOut = '';
+            try {
+                psOut = execSync('ps -ef | grep language_server | grep -v grep', { encoding: 'utf8' });
+            } catch (e) {
+                return null;
+            }
+            if (psOut.trim()) {
+                const lines = psOut.trim().split(/\r?\n/);
+                lines.forEach(line => {
+                    const parts = line.trim().split(/\s+/);
+                    const pid = parts[1];
+                    if (pid && !isNaN(Number(pid))) {
+                        processes.push({
+                            ProcessId: Number(pid),
+                            CommandLine: line
+                        });
+                    }
+                });
+            }
+        }
+        
+        if (processes.length === 0) return null;
+        
+        for (const proc of processes) {
+            const pid = proc.ProcessId;
+            const cmdLine = proc.CommandLine || '';
             if (!pid || isNaN(Number(pid))) continue;
             
-            const tokenMatch = line.match(/--csrf_token[\s=]+([^\s]+)/);
+            const tokenMatch = cmdLine.match(/--csrf_token[\s=]+([^\s]+)/);
             if (!tokenMatch) continue;
             const csrf = tokenMatch[1].replace(/['"]+/g, "").trim();
             
-            let lsofOut = '';
-            try {
-                lsofOut = execSync(`lsof -nP -iTCP -sTCP:LISTEN -a -p ${pid}`, { encoding: 'utf8' });
-            } catch (e) {
-                try {
-                    lsofOut = execSync(`ss -lntp | grep "pid=${pid}," || true`, { encoding: 'utf8' });
-                } catch (e2) {}
-            }
-            
-            if (!lsofOut.trim()) continue;
-            
             const ports = [];
-            lsofOut.trim().split(/\r?\n/).forEach((l) => {
-                const portMatch = l.match(/:(\d+)\s+/) || l.match(/127\.0\.0\.1:(\d+)/);
-                if (portMatch) ports.push(portMatch[1]);
-            });
+            if (isWin) {
+                try {
+                    const netstatOut = execSync('netstat -ano', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+                    netstatOut.split(/\r?\n/).forEach((l) => {
+                        if (l.includes('LISTENING') && l.includes(String(pid))) {
+                            const parts = l.trim().split(/\s+/);
+                            if (parts[parts.length - 1] === String(pid)) {
+                                const address = parts[1];
+                                const portMatch = address.match(/:(\d+)$/);
+                                if (portMatch) ports.push(portMatch[1]);
+                            }
+                        }
+                    });
+                } catch (e) {}
+            } else {
+                let lsofOut = '';
+                try {
+                    lsofOut = execSync(`lsof -nP -iTCP -sTCP:LISTEN -a -p ${pid}`, { encoding: 'utf8' });
+                } catch (e) {
+                    try {
+                        lsofOut = execSync(`ss -lntp | grep "pid=${pid}," || true`, { encoding: 'utf8' });
+                    } catch (e2) {}
+                }
+                if (lsofOut.trim()) {
+                    lsofOut.trim().split(/\r?\n/).forEach((l) => {
+                        const portMatch = l.match(/:(\d+)\s+/) || l.match(/127\.0\.0\.1:(\d+)/);
+                        if (portMatch) ports.push(portMatch[1]);
+                    });
+                }
+            }
             
             const uniquePorts = [...new Set(ports)];
             for (const port of uniquePorts) {
@@ -224,8 +385,7 @@ async function queryLsp() {
 // Helper to get active model preference from SQLite DB
 function getActiveModelIdFromSqlite() {
     try {
-        const pythonScript = path.join(__dirname, 'query_model_info.py');
-        const modelInfoRaw = execSync(`python3 "${pythonScript}"`, { encoding: 'utf8' });
+        const modelInfoRaw = runQueryModelInfo();
         if (modelInfoRaw) {
             const modelInfo = JSON.parse(modelInfoRaw);
             return modelInfo.activeModelId;
@@ -322,8 +482,7 @@ function updateChecksums() {
 // Clear JS Code Cache to force Electron to recompile modified workbench files
 function clearCodeCache() {
     try {
-        const os = require('os');
-        const cacheDir = path.join(os.homedir(), '.config', 'Antigravity IDE', 'Code Cache', 'js');
+        const cacheDir = path.join(getAppConfigDir(), 'Code Cache', 'js');
         if (fs.existsSync(cacheDir)) {
             fs.rmSync(cacheDir, { recursive: true, force: true });
             console.log(`[Sentinel] Cleared cache directory: ${cacheDir}`);
@@ -515,39 +674,116 @@ function formatCountdown(expirationSec) {
 // Update status bar item content based on current configuration and state
 function updateStatusBar() {
     if (!statusBarItem) return;
-    const wbPath = getWorkbenchPath();
-    if (!wbPath) {
-        statusBarItem.hide();
-        return;
-    }
+    
+    try {
+        const isRemote = !!vscode.env.remoteName;
+        const injected = isRemote || isScriptInjected();
+        const state = readState();
 
-    const state = readState();
-    const injected = isScriptInjected();
-
-    if (!injected) {
-        statusBarItem.text = '$(circle-slash) Kadzura Super Sentinel : NOT INSTALLED';
-        statusBarItem.tooltip = 'Antigravity Super Sentinel clicker is not injected. Click to install/enable.';
-        statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-        statusBarItem.color = '#ef4444';
-    } else {
-        const data = gatherSentinelData();
-        const activeModel = data.activeModel || 'Gemini 3.5 Flash (High)';
-        const quotaPct = Math.round((data.activeModelRemainingFraction || 0.0) * 100);
-        const countdown = formatCountdown(data.activeModelExpiration);
-
-        if (state.enabled) {
-            statusBarItem.text = `$(eye) Kadzura Super Sentinel : ACTIVE | ${activeModel} ${quotaPct}% (${countdown})`;
-            statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.remoteBackground');
-            statusBarItem.color = '#c084fc';
-            statusBarItem.tooltip = `Antigravity Super Sentinel clicker is Active.\nActive Model: ${activeModel}\nQuota Remaining: ${quotaPct}%\nReset in: ${countdown}\nClick to open Sentinel Dashboard.`;
+        if (!injected) {
+            statusBarItem.text = '$(circle-slash) Kadzura Super Sentinel : NOT INSTALLED';
+            statusBarItem.tooltip = 'Antigravity Super Sentinel clicker is not injected. Click to install/enable.';
+            statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+            statusBarItem.color = '#ef4444';
         } else {
-            statusBarItem.text = `$(circle-slash) Kadzura Super Sentinel : PAUSED | ${activeModel} ${quotaPct}% (${countdown})`;
-            statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-            statusBarItem.color = '#fbbf24';
-            statusBarItem.tooltip = `Antigravity Super Sentinel clicker is Paused.\nActive Model: ${activeModel}\nQuota Remaining: ${quotaPct}%\nReset in: ${countdown}\nClick to open Sentinel Dashboard.`;
+            const data = gatherSentinelData();
+            const activeModel = data.activeModel || 'Gemini 3.5 Flash (High)';
+            const quotaPct = Math.round((data.activeModelRemainingFraction || 0.0) * 100);
+            const countdown = formatCountdown(data.activeModelExpiration);
+
+            const statusLabel = isRemote ? 'REMOTE ACTIVE' : (state.enabled ? 'ACTIVE' : 'PAUSED');
+            const icon = state.enabled ? '$(eye)' : '$(circle-slash)';
+            
+            statusBarItem.text = `${icon} Kadzura Super Sentinel : ${statusLabel} | ${activeModel} ${quotaPct}% (${countdown})`;
+            
+            if (state.enabled) {
+                statusBarItem.backgroundColor = undefined; // Avoid using unsupported ThemeColor 'statusBarItem.remoteBackground'
+                statusBarItem.color = '#c084fc';
+                statusBarItem.tooltip = `Antigravity Super Sentinel clicker is ${statusLabel}.\nActive Model: ${activeModel}\nQuota Remaining: ${quotaPct}%\nReset in: ${countdown}\nClick to open Sentinel Dashboard.`;
+            } else {
+                statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+                statusBarItem.color = '#fbbf24';
+                statusBarItem.tooltip = `Antigravity Super Sentinel clicker is ${statusLabel}.\nActive Model: ${activeModel}\nQuota Remaining: ${quotaPct}%\nReset in: ${countdown}\nClick to open Sentinel Dashboard.`;
+            }
+        }
+        statusBarItem.show();
+    } catch (err) {
+        console.error('[Sentinel] Error in updateStatusBar:', err.message);
+    }
+}
+
+// Unified synchronization function to update both the status bar and the active webview panel
+function syncOverwatchData() {
+    updateStatusBar();
+    if (sidebarProvider && sidebarProvider._view) {
+        try {
+            const data = gatherSentinelData();
+            if (sidebarProvider._view.visible) {
+                // Translate browser frame paths to Webview URIs
+                if (data.browserFrames.length > 0) {
+                    data.browserFrames = data.browserFrames.map(f => {
+                        return sidebarProvider._view.webview.asWebviewUri(vscode.Uri.file(f)).toString();
+                    });
+                }
+                sidebarProvider._view.webview.postMessage({
+                    command: 'updateOverwatch',
+                    data: data
+                });
+            }
+        } catch (e) {
+            console.error('[Sentinel] Failed to sync overwatch data to webview:', e.message);
         }
     }
-    statusBarItem.show();
+}
+
+let dbWatcher = null;
+let transcriptWatcher = null;
+let currentWatchedTranscriptPath = '';
+
+// Watch the state.vscdb file for real-time model preferences changes
+function setupDbWatcher() {
+    if (dbWatcher) return;
+    const dbPath = getDbPath();
+    if (!fs.existsSync(dbPath)) {
+        // If file doesn't exist yet, watch the folder to detect when it's created
+        const dir = path.dirname(dbPath);
+        if (fs.existsSync(dir)) {
+            try {
+                dbWatcher = fs.watch(dir, (eventType, filename) => {
+                    if (filename === 'state.vscdb') {
+                        syncOverwatchData();
+                    }
+                });
+            } catch (e) {}
+        }
+        return;
+    }
+    try {
+        dbWatcher = fs.watch(dbPath, (eventType) => {
+            if (eventType === 'change') {
+                syncOverwatchData();
+            }
+        });
+    } catch (e) {}
+}
+
+// Watch the active transcript.jsonl file for real-time execution steps and model updates
+function setupTranscriptWatcher(tPath) {
+    if (currentWatchedTranscriptPath === tPath) return;
+    if (transcriptWatcher) {
+        transcriptWatcher.close();
+        transcriptWatcher = null;
+    }
+    if (!tPath || !fs.existsSync(tPath)) return;
+    try {
+        const dir = path.dirname(tPath);
+        transcriptWatcher = fs.watch(dir, (eventType, filename) => {
+            if (filename === 'transcript.jsonl') {
+                syncOverwatchData();
+            }
+        });
+        currentWatchedTranscriptPath = tPath;
+    } catch (e) {}
 }
 
 // Setup file watcher to sync state changes automatically
@@ -560,7 +796,7 @@ function setupStateFileWatcher() {
         stateWatcher = fs.watch(statePath, (eventType) => {
             if (eventType === 'change') {
                 const latestState = readState();
-                updateStatusBar();
+                syncOverwatchData();
                 
                 // If sidebar webview panel is currently active, push updates
                 if (sidebarProvider && sidebarProvider._view) {
@@ -601,7 +837,9 @@ function gatherSentinelData() {
     };
 
     try {
-        const brainDir = '/home/kadzura/.gemini/antigravity-ide/brain';
+        const os = require('os');
+        const geminiBaseDir = path.join(os.homedir(), '.gemini');
+        const brainDir = path.join(geminiBaseDir, 'antigravity-ide', 'brain');
         if (!fs.existsSync(brainDir)) return data;
 
         const now = Date.now();
@@ -636,6 +874,9 @@ function gatherSentinelData() {
 
         data.sessionActive = true;
         data.sessionId = cachedLatestSession.id;
+
+        // Register transcript file watcher for real-time status updates
+        setupTranscriptWatcher(cachedLatestSession.transcriptPath);
 
         // Parse transcript.jsonl with mtime caching to prevent heavy parsing
         const tPath = cachedLatestSession.transcriptPath;
@@ -705,15 +946,16 @@ function gatherSentinelData() {
             data.modelsList = cachedLspData.modelsList;
 
             let activeModelObj = null;
-            if (transcriptActiveModel) {
+            // 1. Prioritize SQLite database active model (comparing as strings to prevent type mismatch)
+            const sqliteActiveId = getActiveModelIdFromSqlite();
+            if (sqliteActiveId !== null && sqliteActiveId !== undefined) {
+                activeModelObj = cachedLspData.modelsList.find(m => String(m.id) === String(sqliteActiveId));
+            }
+            // 2. Fall back to transcript's Model Selection event
+            if (!activeModelObj && transcriptActiveModel) {
                 activeModelObj = cachedLspData.modelsList.find(m => m.name === transcriptActiveModel);
             }
-            if (!activeModelObj) {
-                const sqliteActiveId = getActiveModelIdFromSqlite();
-                if (sqliteActiveId) {
-                    activeModelObj = cachedLspData.modelsList.find(m => m.id === sqliteActiveId);
-                }
-            }
+            // 3. Default fallback to first model
             if (!activeModelObj && cachedLspData.modelsList.length > 0) {
                 activeModelObj = cachedLspData.modelsList[0];
             }
@@ -722,23 +964,52 @@ function gatherSentinelData() {
                 data.activeModel = activeModelObj.name;
                 data.activeModelExpiration = activeModelObj.expiration;
                 data.activeModelRemainingFraction = activeModelObj.remainingFraction;
+            } else {
+                if (transcriptActiveModel) {
+                    data.activeModel = transcriptActiveModel;
+                }
             }
         } else {
             // SQLite Fallback (e.g. if LSP is loading)
             try {
-                const pythonScript = path.join(__dirname, 'query_model_info.py');
-                const modelInfoRaw = execSync(`python3 "${pythonScript}"`, { encoding: 'utf8' });
+                const modelInfoRaw = runQueryModelInfo();
                 if (modelInfoRaw) {
                     const modelInfo = JSON.parse(modelInfoRaw);
-                    if (modelInfo.activeModel && !transcriptActiveModel) {
-                        data.activeModel = modelInfo.activeModel;
+                    data.modelsList = modelInfo.models || [];
+                    
+                    let activeModelObj = null;
+                    // 1. Prioritize database selection
+                    if (modelInfo.activeModel) {
+                        activeModelObj = data.modelsList.find(m => m.name === modelInfo.activeModel);
                     }
-                    data.activeModelExpiration = modelInfo.expiration;
-                    data.activeModelRemainingFraction = modelInfo.remainingFraction;
-                    data.modelsList = modelInfo.models;
+                    // 2. Fall back to transcript
+                    if (!activeModelObj && transcriptActiveModel) {
+                        activeModelObj = data.modelsList.find(m => m.name === transcriptActiveModel);
+                    }
+                    
+                    if (activeModelObj) {
+                        data.activeModel = activeModelObj.name;
+                        data.activeModelExpiration = activeModelObj.expiration;
+                        data.activeModelRemainingFraction = activeModelObj.remainingFraction;
+                    } else {
+                        if (modelInfo.activeModel) {
+                            data.activeModel = modelInfo.activeModel;
+                        } else if (transcriptActiveModel) {
+                            data.activeModel = transcriptActiveModel;
+                        }
+                        data.activeModelExpiration = modelInfo.expiration;
+                        data.activeModelRemainingFraction = modelInfo.remainingFraction;
+                    }
+                } else {
+                    if (transcriptActiveModel) {
+                        data.activeModel = transcriptActiveModel;
+                    }
                 }
             } catch (e) {
                 console.error('[Sentinel] Failed to query model info fallback:', e.message);
+                if (transcriptActiveModel) {
+                    data.activeModel = transcriptActiveModel;
+                }
             }
         }
 
@@ -769,7 +1040,7 @@ function gatherSentinelData() {
         data.contextLimit = currentModelLimits.limit;
 
         // Scan Browser Recordings
-        const recDir = path.join('/home/kadzura/.gemini/antigravity-ide/browser_recordings', data.sessionId);
+        const recDir = path.join(geminiBaseDir, 'antigravity-ide', 'browser_recordings', data.sessionId);
         if (fs.existsSync(recDir)) {
             const files = fs.readdirSync(recDir);
             const imageFiles = files.filter(f => f.endsWith('.jpg') || f.endsWith('.png') || f.endsWith('.webp'))
@@ -779,7 +1050,7 @@ function gatherSentinelData() {
         }
 
         // Scan Skills
-        const skillsDir = '/home/kadzura/.gemini/config/skills';
+        const skillsDir = path.join(geminiBaseDir, 'config', 'skills');
         if (fs.existsSync(skillsDir)) {
             const skillFolders = fs.readdirSync(skillsDir);
             for (const folder of skillFolders) {
@@ -798,7 +1069,7 @@ function gatherSentinelData() {
         }
 
         // Scan MCP Config
-        const mcpPath = '/home/kadzura/.gemini/config/mcp_config.json';
+        const mcpPath = path.join(geminiBaseDir, 'config', 'mcp_config.json');
         if (fs.existsSync(mcpPath)) {
             try {
                 const mcpRaw = fs.readFileSync(mcpPath, 'utf8');
@@ -816,11 +1087,38 @@ function gatherSentinelData() {
         }
 
         // Scan Child Sessions (Sub-trajectories)
-        const conversationsDir = '/home/kadzura/.gemini/antigravity-ide/conversations';
-        const agentapiPath = '/home/kadzura/.gemini/antigravity-ide/bin/agentapi';
+        const conversationsDir = path.join(geminiBaseDir, 'antigravity-ide', 'conversations');
+        let agentapiPath = path.join(geminiBaseDir, 'antigravity-ide', 'bin', 'agentapi');
+        if (process.platform === 'win32') {
+            const winExe = agentapiPath + '.exe';
+            const winCmd = agentapiPath + '.cmd';
+            const winBat = agentapiPath + '.bat';
+            if (fs.existsSync(winExe)) {
+                agentapiPath = winExe;
+            } else if (fs.existsSync(winCmd)) {
+                agentapiPath = winCmd;
+            } else if (fs.existsSync(winBat)) {
+                agentapiPath = winBat;
+            }
+        }
         if (fs.existsSync(conversationsDir) && fs.existsSync(agentapiPath)) {
             const files = fs.readdirSync(conversationsDir);
-            const dbFiles = files.filter(f => f.endsWith('.db') && !f.includes(data.sessionId));
+            
+            // Optimize scan: only scan DB files modified after this session started (or in the last 15 minutes)
+            const currentSessionStat = fs.statSync(tPath);
+            const currentSessionTime = currentSessionStat.birthtimeMs || currentSessionStat.mtimeMs || Date.now();
+            const thresholdTime = currentSessionTime - 15 * 60 * 1000;
+
+            const dbFiles = files.filter(f => {
+                if (!f.endsWith('.db') || f.includes(data.sessionId)) return false;
+                try {
+                    const dbStat = fs.statSync(path.join(conversationsDir, f));
+                    return dbStat.mtimeMs > thresholdTime;
+                } catch (e) {
+                    return false;
+                }
+            });
+
             for (const dbFile of dbFiles) {
                 const subSessionId = dbFile.substring(0, dbFile.length - 3);
                 try {
@@ -879,21 +1177,7 @@ class SentinelViewProvider {
         // Start active session polling timer (every 2 seconds)
         const pollInterval = setInterval(() => {
             if (webviewView.visible) {
-                try {
-                    const data = gatherSentinelData();
-                    if (data.browserFrames.length > 0) {
-                        data.browserFrames = data.browserFrames.map(f => {
-                            return webviewView.webview.asWebviewUri(vscode.Uri.file(f)).toString();
-                        });
-                    }
-                    webviewView.webview.postMessage({
-                        command: 'updateOverwatch',
-                        data: data
-                    });
-                    updateStatusBar();
-                } catch (e) {
-                    console.error('[Sentinel] Polling failed:', e.message);
-                }
+                syncOverwatchData();
             }
         }, 2000);
 
@@ -903,7 +1187,7 @@ class SentinelViewProvider {
             if (msg.command === 'toggleAccept') {
                 state.enabled = msg.enabled;
                 writeState(state);
-                updateStatusBar();
+                syncOverwatchData();
             } else if (msg.command === 'toggleScroll') {
                 state.scrollEnabled = msg.enabled;
                 writeState(state);
@@ -924,7 +1208,7 @@ class SentinelViewProvider {
                 state.totalClicks = 0;
                 state.clickStats = {};
                 writeState(state);
-                updateStatusBar();
+                syncOverwatchData();
             }
         });
 
@@ -948,7 +1232,7 @@ function activate(context) {
             const data = await queryLsp();
             if (data) {
                 cachedLspData = data;
-                updateStatusBar();
+                syncOverwatchData();
             }
         } catch (e) {}
     }, 5000);
@@ -957,7 +1241,7 @@ function activate(context) {
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100000);
     statusBarItem.command = 'antigravity-super-sentinel.openSettings';
     context.subscriptions.push(statusBarItem);
-    updateStatusBar();
+    syncOverwatchData();
 
     // Register Sidebar View Provider
     sidebarProvider = new SentinelViewProvider(context.extensionUri, context);
@@ -968,14 +1252,14 @@ function activate(context) {
         )
     );
 
-    // Auto-inject script on startup if not already injected
-    if (!isScriptInjected()) {
+    // Auto-inject script on startup if not already injected and not in a remote session
+    if (!vscode.env.remoteName && !isScriptInjected()) {
         console.log('[Sentinel] Script not found in workbench.html, executing auto-inject...');
         const success = injectScript(context);
         if (success) {
             clearCodeCache();
             updateChecksums();
-            updateStatusBar();
+            syncOverwatchData();
             vscode.window.showInformationMessage(
                 '[Sentinel] Clean clicker auto-injected. Please reload window to activate.',
                 'Reload Window'
@@ -988,15 +1272,20 @@ function activate(context) {
     }
 
     setupStateFileWatcher();
+    setupDbWatcher();
 
     // Register Enable Command
     context.subscriptions.push(
         vscode.commands.registerCommand('antigravity-super-sentinel.enable', async () => {
+            if (vscode.env.remoteName) {
+                vscode.window.showWarningMessage('[Sentinel] Auto-clicker script injection is not supported in remote windows (WSL/SSH).');
+                return;
+            }
             const success = injectScript(context);
             if (success) {
                 clearCodeCache();
                 updateChecksums();
-                updateStatusBar();
+                syncOverwatchData();
                 setupStateFileWatcher();
                 vscode.window.showInformationMessage('[Sentinel] Clicker script injected successfully. Reloading window...', 'Reload Now').then(() => {
                     vscode.commands.executeCommand('workbench.action.reloadWindow');
@@ -1008,6 +1297,10 @@ function activate(context) {
     // Register Disable Command
     context.subscriptions.push(
         vscode.commands.registerCommand('antigravity-super-sentinel.disable', async () => {
+            if (vscode.env.remoteName) {
+                vscode.window.showWarningMessage('[Sentinel] Auto-clicker script removal is not supported in remote windows (WSL/SSH).');
+                return;
+            }
             const success = removeScript();
             if (success) {
                 if (stateWatcher) {
@@ -1016,7 +1309,7 @@ function activate(context) {
                 }
                 clearCodeCache();
                 updateChecksums();
-                updateStatusBar();
+                syncOverwatchData();
                 vscode.window.showInformationMessage('[Sentinel] Clicker script removed successfully. Reloading window...', 'Reload Now').then(() => {
                     vscode.commands.executeCommand('workbench.action.reloadWindow');
                 });
@@ -1037,7 +1330,7 @@ function activate(context) {
 
             state.enabled = nextEnabled;
             writeState(state);
-            updateStatusBar();
+            syncOverwatchData();
 
             const message = nextEnabled ? 'Auto-Accept clicker is now ACTIVE.' : 'Auto-Accept clicker is now PAUSED.';
             vscode.window.setStatusBarMessage(`[Sentinel] ${message}`, 3000);
@@ -1062,7 +1355,7 @@ function activate(context) {
                 state.enabled = config.get('enabled', true);
                 state.scrollEnabled = config.get('scrollEnabled', true);
                 writeState(state);
-                updateStatusBar();
+                syncOverwatchData();
             }
         })
     );
@@ -1076,6 +1369,14 @@ function deactivate() {
     if (stateWatcher) {
         stateWatcher.close();
         stateWatcher = null;
+    }
+    if (dbWatcher) {
+        dbWatcher.close();
+        dbWatcher = null;
+    }
+    if (transcriptWatcher) {
+        transcriptWatcher.close();
+        transcriptWatcher = null;
     }
     if (statusBarItem) {
         statusBarItem.dispose();

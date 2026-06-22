@@ -18,7 +18,7 @@
 		"vscode": "^1.60.0"
 	},
 	"extensionKind": [
-		"ui"
+		"workspace"
 	],
 	"categories": [
 		"Other"
@@ -42,7 +42,8 @@
 				{
 					"type": "webview",
 					"id": "antigravity-super-sentinel-view",
-					"name": "Sentinel Dashboard"
+					"name": "Sentinel Dashboard",
+					"icon": "media/icon.svg"
 				}
 			]
 		},
