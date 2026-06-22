@@ -7,14 +7,6 @@ const https = require('https');
 const execSync = require('child_process').execSync;
 const buildSettingsHtml = require('./settingsHtml');
 
-function debugLog(msg) {
-    try {
-        const logPath = '/home/kadzura/.gemini/antigravity-ide/brain/a9d1c664-09eb-4e68-b570-253a24f7eddc/scratch/sentinel_debug.log';
-        const ts = new Date().toISOString();
-        fs.appendFileSync(logPath, `[${ts}] ${msg}\n`, 'utf8');
-    } catch (e) {}
-}
-
 
 const TAG_START = '<!-- ANTIGRAVITY-SUPER-SENTINEL-START -->';
 const TAG_END = '<!-- ANTIGRAVITY-SUPER-SENTINEL-END -->';
@@ -266,7 +258,6 @@ let lastPythonRunTime = 0;
 function runQueryModelInfo() {
     try {
         const dbPath = getDbPath();
-        debugLog(`runQueryModelInfo: dbPath=${dbPath}, exists=${fs.existsSync(dbPath)}`);
         if (!fs.existsSync(dbPath)) return null;
 
         const now = Date.now();
@@ -281,7 +272,6 @@ function runQueryModelInfo() {
             : (dbPath === cachedDbPath && stat.mtimeMs === cachedDbMtime && cacheAge < 4000 && cachedModelInfoRaw);
 
         if (isCacheValid) {
-            debugLog(`runQueryModelInfo: Cache hit (age: ${cacheAge}ms)`);
             return cachedModelInfoRaw;
         }
 
@@ -290,19 +280,15 @@ function runQueryModelInfo() {
         let modelInfoRaw = null;
 
         try {
-            debugLog(`runQueryModelInfo: executing "${pythonCmd}" "${pythonScript}" "${dbPath}"`);
             modelInfoRaw = execSync(`"${pythonCmd}" "${pythonScript}" "${dbPath}"`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
         } catch (e) {
-            debugLog(`runQueryModelInfo error with "${pythonCmd}": ${e.message}. Stderr: ${e.stderr ? e.stderr.toString() : ''}`);
             if (process.platform === 'win32') {
                 const fallbacks = ['python3', 'py'];
                 for (const cmd of fallbacks) {
                     try {
-                        debugLog(`runQueryModelInfo fallback: executing "${cmd}"`);
                         modelInfoRaw = execSync(`"${cmd}" "${pythonScript}" "${dbPath}"`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
                         if (modelInfoRaw) break;
                     } catch (e2) {
-                        debugLog(`runQueryModelInfo fallback "${cmd}" error: ${e2.message}`);
                     }
                 }
             }
@@ -313,13 +299,10 @@ function runQueryModelInfo() {
             cachedDbMtime = stat.mtimeMs;
             cachedDbPath = dbPath;
             lastPythonRunTime = now;
-            debugLog(`runQueryModelInfo success, returned length: ${modelInfoRaw.length}`);
         } else {
-            debugLog(`runQueryModelInfo failed, returned null`);
         }
         return modelInfoRaw;
     } catch (err) {
-        debugLog(`runQueryModelInfo outer catch: ${err.message}`);
     }
     return null;
 }
@@ -327,7 +310,6 @@ function runQueryModelInfo() {
 // Scans PIDs, detects ports, updates cachedLspData
 async function queryLsp() {
     try {
-        debugLog("queryLsp: starting scan");
         let processes = [];
         const isWin = process.platform === 'win32';
         
@@ -375,7 +357,6 @@ async function queryLsp() {
             try {
                 psOut = execSync('ps -ef | grep language_server | grep -v grep', { encoding: 'utf8' });
             } catch (e) {
-                debugLog(`queryLsp ps grep failed: ${e.message}`);
             }
             if (psOut.trim()) {
                 const lines = psOut.trim().split(/\r?\n/);
@@ -433,7 +414,6 @@ async function queryLsp() {
             }
         }
         
-        debugLog(`queryLsp: found ${processes.length} processes`);
         if (processes.length === 0) return null;
         
         for (const proc of processes) {
@@ -443,11 +423,9 @@ async function queryLsp() {
             
             const tokenMatch = cmdLine.match(/--csrf_token[\s=]+([^\s]+)/);
             if (!tokenMatch) {
-                debugLog(`queryLsp: PID ${pid} missing csrf token in cmdLine`);
                 continue;
             }
             const csrf = tokenMatch[1].replace(/['"]+/g, "").trim();
-            debugLog(`queryLsp: PID ${pid} token=${csrf}`);
             
             const ports = [];
             if (proc.isWindowsProcess) {
@@ -465,7 +443,6 @@ async function queryLsp() {
                         }
                     });
                 } catch (e) {
-                    debugLog(`queryLsp netstat.exe failed: ${e.message}`);
                 }
             } else {
                 let lsofOut = '';
@@ -485,31 +462,26 @@ async function queryLsp() {
             }
             
             const uniquePorts = [...new Set(ports)];
-            debugLog(`queryLsp: PID ${pid} unique ports found: ${uniquePorts.join(',')}`);
             for (const port of uniquePorts) {
-                debugLog(`queryLsp: posting to port ${port}`);
                 const result = await postToLsp(port, csrf);
                 if (result) {
-                    debugLog(`queryLsp: success on port ${port}, email=${result.email}`);
                     return result;
                 } else {
-                    debugLog(`queryLsp: failed on port ${port}`);
                 }
             }
         }
     } catch (e) {
-        debugLog(`queryLsp outer error: ${e.message}`);
     }
     return null;
 }
 
-// Helper to get active model preference name from SQLite DB
-function getActiveModelNameFromSqlite() {
+// Helper to get active model preference ID from SQLite DB (matches V1 logic)
+function getActiveModelIdFromSqlite() {
     try {
         const modelInfoRaw = runQueryModelInfo();
         if (modelInfoRaw) {
             const modelInfo = JSON.parse(modelInfoRaw);
-            return modelInfo.activeModel;
+            return modelInfo.activeModelId;
         }
     } catch (e) {}
     return null;
@@ -795,7 +767,6 @@ function formatCountdown(expirationSec) {
 // Update status bar item content based on current configuration and state
 function updateStatusBar() {
     if (!statusBarItem) {
-        debugLog("updateStatusBar: statusBarItem is null/undefined");
         return;
     }
     
@@ -809,7 +780,6 @@ function updateStatusBar() {
             statusBarItem.tooltip = 'Antigravity Super Sentinel clicker is not injected. Click to install/enable.';
             statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
             statusBarItem.color = '#ef4444';
-            debugLog("updateStatusBar: NOT INSTALLED status");
         } else {
             const data = gatherSentinelData();
             const activeModel = data.activeModel || 'Gemini 3.5 Flash (High)';
@@ -820,7 +790,6 @@ function updateStatusBar() {
             const icon = state.enabled ? '$(eye)' : '$(circle-slash)';
             
             statusBarItem.text = `${icon} Kadzura Super Sentinel : ${statusLabel} | ${activeModel} ${quotaPct}% (${countdown})`;
-            debugLog(`updateStatusBar: text="${statusBarItem.text}"`);
             
             if (state.enabled) {
                 statusBarItem.backgroundColor = undefined; // Avoid using unsupported ThemeColor 'statusBarItem.remoteBackground'
@@ -834,7 +803,6 @@ function updateStatusBar() {
         }
         statusBarItem.show();
     } catch (err) {
-        debugLog(`updateStatusBar error: ${err.message}`);
         console.error('[Sentinel] Error in updateStatusBar:', err.message);
     }
 }
@@ -843,7 +811,6 @@ function updateStatusBar() {
 function syncOverwatchData() {
     try {
         const data = gatherSentinelData();
-        debugLog(`syncOverwatchData: gathered activeModel=${data.activeModel}, email=${data.email}, modelsListCount=${data.modelsList.length}`);
         updateStatusBar();
         if (sidebarProvider && sidebarProvider._view) {
             if (sidebarProvider._view.visible) {
@@ -853,17 +820,14 @@ function syncOverwatchData() {
                         return sidebarProvider._view.webview.asWebviewUri(vscode.Uri.file(f)).toString();
                     });
                 }
-                debugLog(`syncOverwatchData: posting to visible webview`);
                 sidebarProvider._view.webview.postMessage({
                     command: 'updateOverwatch',
                     data: data
                 });
             } else {
-                debugLog(`syncOverwatchData: webview is not visible`);
             }
         }
     } catch (e) {
-        debugLog(`syncOverwatchData error: ${e.message}`);
         console.error('[Sentinel] Failed to sync overwatch data to webview:', e.message);
     }
 }
@@ -1078,14 +1042,16 @@ function gatherSentinelData() {
             data.modelsList = cachedLspData.modelsList;
 
             let activeModelObj = null;
-            // 1. Prioritize SQLite database active model by name
-            const sqliteActiveName = getActiveModelNameFromSqlite();
-            if (sqliteActiveName) {
-                activeModelObj = cachedLspData.modelsList.find(m => m.name === sqliteActiveName);
-            }
-            // 2. Fall back to transcript's Model Selection event
-            if (!activeModelObj && transcriptActiveModel) {
+            // 1. Prioritize transcript's Model Selection event (real-time from chat dropdown)
+            if (transcriptActiveModel) {
                 activeModelObj = cachedLspData.modelsList.find(m => m.name === transcriptActiveModel);
+            }
+            // 2. Fall back to SQLite database active model by ID
+            if (!activeModelObj) {
+                const sqliteActiveId = getActiveModelIdFromSqlite();
+                if (sqliteActiveId) {
+                    activeModelObj = cachedLspData.modelsList.find(m => m.id === sqliteActiveId);
+                }
             }
             // 3. Default fallback to first model
             if (!activeModelObj && cachedLspData.modelsList.length > 0) {
@@ -1096,10 +1062,6 @@ function gatherSentinelData() {
                 data.activeModel = activeModelObj.name;
                 data.activeModelExpiration = activeModelObj.expiration;
                 data.activeModelRemainingFraction = activeModelObj.remainingFraction;
-            } else {
-                if (transcriptActiveModel) {
-                    data.activeModel = transcriptActiveModel;
-                }
             }
         } else {
             // SQLite Fallback (e.g. if LSP is loading)
@@ -1110,13 +1072,13 @@ function gatherSentinelData() {
                     data.modelsList = modelInfo.models || [];
                     
                     let activeModelObj = null;
-                    // 1. Prioritize database selection
-                    if (modelInfo.activeModel) {
-                        activeModelObj = data.modelsList.find(m => m.name === modelInfo.activeModel);
-                    }
-                    // 2. Fall back to transcript
-                    if (!activeModelObj && transcriptActiveModel) {
+                    // 1. Prioritize transcript (real-time from chat dropdown)
+                    if (transcriptActiveModel) {
                         activeModelObj = data.modelsList.find(m => m.name === transcriptActiveModel);
+                    }
+                    // 2. Fall back to database selection
+                    if (!activeModelObj && modelInfo.activeModel) {
+                        activeModelObj = data.modelsList.find(m => m.name === modelInfo.activeModel);
                     }
                     
                     if (activeModelObj) {
@@ -1124,10 +1086,10 @@ function gatherSentinelData() {
                         data.activeModelExpiration = activeModelObj.expiration;
                         data.activeModelRemainingFraction = activeModelObj.remainingFraction;
                     } else {
-                        if (modelInfo.activeModel) {
-                            data.activeModel = modelInfo.activeModel;
-                        } else if (transcriptActiveModel) {
+                        if (transcriptActiveModel) {
                             data.activeModel = transcriptActiveModel;
+                        } else if (modelInfo.activeModel) {
+                            data.activeModel = modelInfo.activeModel;
                         }
                         data.activeModelExpiration = modelInfo.expiration;
                         data.activeModelRemainingFraction = modelInfo.remainingFraction;
@@ -1353,7 +1315,6 @@ class SentinelViewProvider {
 
 // Extension Activation entry point
 function activate(context) {
-    debugLog("Extension activate() called");
     console.log('[Sentinel] Extension activated.');
 
     // Start LSP polling loop
@@ -1414,23 +1375,6 @@ function activate(context) {
         } catch (e) {}
     }, 4000);
     context.subscriptions.push({ dispose: () => clearInterval(bgPollInterval) });
-
-    // Auto-dump configuration on startup (Experimental for debugging active model)
-    setTimeout(() => {
-        try {
-            const config = vscode.workspace.getConfiguration('antigravity');
-            const allKeys = Object.keys(config);
-            let output = "=== Antigravity Workspace Config Dump ===\n";
-            for (const key of allKeys) {
-                output += `${key} : ${JSON.stringify(config.get(key), null, 2)}\n`;
-            }
-            const fs = require('fs');
-            fs.writeFileSync('/tmp/antigravity_config_dump.txt', output);
-            vscode.window.showInformationMessage('[Sentinel] Config dumped to /tmp! Kadzura will read it automatically.');
-        } catch (e) {
-            console.error(e);
-        }
-    }, 5000);
 
     // Register Enable Command
     context.subscriptions.push(
