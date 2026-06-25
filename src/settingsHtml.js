@@ -1075,19 +1075,22 @@ module.exports = function buildSettingsHtml(data) {
             }
         }
 
-        // ── Tab navigation — event delegation, no inline onclick ───────────────────
-        // Using addEventListener + closest() handles clicks on SVG children inside buttons
-        // and avoids any potential CSP restriction on inline onclick attributes.
-        document.querySelector('.tabs').addEventListener('click', function(e) {
-            const btn = e.target.closest('[data-tab]');
-            if (!btn) return;
-            const tabId = btn.dataset.tab;
-            document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
-            document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
-            btn.classList.add('active');
-            var tabEl = document.getElementById('tab-' + tabId);
-            if (tabEl) tabEl.classList.add('active');
-        });
+        // ── Tab navigation ───────────────────────────────────────────────────────
+        // querySelectorAll NEVER throws (returns empty NodeList on no match).
+        // Per-button addEventListener is the safest approach — no querySelector dependency.
+        try {
+            document.querySelectorAll('.tab-btn').forEach(function(btn) {
+                btn.addEventListener('click', function() {
+                    var tabId = btn.getAttribute('data-tab');
+                    if (!tabId) return;
+                    document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+                    document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
+                    btn.classList.add('active');
+                    var el = document.getElementById('tab-' + tabId);
+                    if (el) el.classList.add('active');
+                });
+            });
+        } catch (e) { console.error('[Sentinel] Tab init:', e); }
 
         function updateRangeLabel(id, text) {
             document.getElementById('label-' + id).innerText = text;
@@ -1545,8 +1548,8 @@ module.exports = function buildSettingsHtml(data) {
             }
         });
 
-        // Bootstrap
-        updateOverwatchUi(${JSON.stringify(overwatch)});
+        // Bootstrap — escape <\/script> in JSON so HTML parser never closes this tag early
+        updateOverwatchUi(${JSON.stringify(overwatch).replace(/<\/script>/gi, '<\\/script>')});
     </script>
 </body>
 </html>`;
