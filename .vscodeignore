@@ -1,0 +1,16 @@
+# Build artifacts & local VSIX files
+*.vsix
+
+# Dev/test files
+.vscode/
+.agents/
+AGENTS.md
+
+# Git
+.git/
+.gitignore
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini

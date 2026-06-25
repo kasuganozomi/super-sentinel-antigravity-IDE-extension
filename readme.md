@@ -1,7 +1,7 @@
 # Antigravity Super Sentinel
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.2.0-purple.svg?style=for-the-badge&logo=visual-studio-code" alt="Version" />
+  <img src="https://img.shields.io/badge/version-2.2.1-purple.svg?style=for-the-badge&logo=visual-studio-code" alt="Version" />
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20WSL-blue.svg?style=for-the-badge" alt="Platform" />
   <img src="https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge" alt="License" />
   <img src="https://img.shields.io/badge/Built%20For-Antigravity%20IDE-orange.svg?style=for-the-badge" alt="Built For" />
@@ -105,3 +105,35 @@ Detail your skill's instructions here...
 
 ---
 *Crafted by Kadzura with absolute precision and premium design metrics.*
+
+---
+
+## 📋 Changelog
+
+### v2.2.1 — Performance Refactor (2026-06-25)
+
+> **Critical performance fix.** This version eliminates the IDE lag caused by the extension.
+
+- ♻️ **Replaced all `execSync` with non-blocking `execAsync`** — powershell, netstat, python subprocess, and agentapi calls no longer block the main thread.
+- 🗄️ **Multi-layer TTL cache system** — `gatherSentinelData()` (4s), `isScriptInjected()` (10s), `getWorkbenchPath()` (60s), skills scan (60s), MCP config (30s).
+- ⚡ **WSL path detection pinned** — computed once at startup, never repeated.
+- 🔀 **Child session scan isolated** — moved to dedicated 30s async background interval (was blocking inline every 2–3s).
+- 🔀 **SQLite refresh isolated** — moved to dedicated 8s async background interval.
+- ⏱️ **Polling intervals extended** — LSP: 3s → 8s (with concurrency guard), Sidebar: 2s → 5s.
+- 🧹 Removed `__metadata` residue from `package.json`.
+- ➕ Added `keywords` field for Open VSX/Marketplace discoverability.
+
+### v2.2.0
+- Multi-account analytics and account cache saving.
+- Child sub-session tracking via agentapi.
+- Browser recording frames in dashboard.
+
+### v2.1.x
+- LSP telemetry via HTTPS/HTTP with CSRF token.
+- SQLite model info fallback via Python script.
+- Skills and MCP config scanning.
+
+### v2.0.0
+- Sidebar WebView dashboard.
+- Status bar with active model, quota, and countdown display.
+- State file watcher for real-time sync.
