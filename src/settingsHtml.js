@@ -38,6 +38,9 @@ function buildModelsListHtml(modelsList, activeModel) {
         'GPT-OSS 120B (Medium)'
     ];
     const sortedModels = [...modelsList].sort((a, b) => {
+        // Active model always first — immediately visible without scrolling
+        if (a.name === activeModel) return -1;
+        if (b.name === activeModel) return 1;
         const ia = order.indexOf(a.name); const ib = order.indexOf(b.name);
         return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
     });
@@ -1433,6 +1436,9 @@ module.exports = function buildSettingsHtml(data) {
                         'Claude Sonnet 4.6 (Thinking)', 'Claude Opus 4.6 (Thinking)', 'GPT-OSS 120B (Medium)'
                     ];
                     const sortedModels = [...data.modelsList].sort((a, b) => {
+                        // Active model always first
+                        if (a.name === data.activeModel) return -1;
+                        if (b.name === data.activeModel) return 1;
                         const ia = order.indexOf(a.name); const ib = order.indexOf(b.name);
                         return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
                     });

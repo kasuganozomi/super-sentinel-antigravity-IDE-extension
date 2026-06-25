@@ -1062,14 +1062,27 @@ function gatherSentinelData() {
             data.modelsList = cachedLspData.modelsList;
 
             if (transcriptActiveModel) {
-                // Find in LSP list for quota and expiration info
-                const activeModelObj = cachedLspData.modelsList.find(m => m.name === transcriptActiveModel) || null;
+                // 1. Exact match (preferred)
+                let activeModelObj = cachedLspData.modelsList.find(
+                    m => m.name === transcriptActiveModel
+                ) || null;
+                // 2. Fuzzy fallback — case-insensitive contains, handles minor naming variants
+                //    e.g. transcript = "Claude Sonnet 4.6 (Thinking)", LSP = "Claude Sonnet 4.6"
+                if (!activeModelObj) {
+                    const lower = transcriptActiveModel.toLowerCase();
+                    activeModelObj = cachedLspData.modelsList.find(
+                        m => m.name && (
+                            m.name.toLowerCase().includes(lower) ||
+                            lower.includes(m.name.toLowerCase())
+                        )
+                    ) || null;
+                }
                 if (activeModelObj) {
                     data.activeModel                  = activeModelObj.name;
                     data.activeModelExpiration        = activeModelObj.expiration;
                     data.activeModelRemainingFraction = activeModelObj.remainingFraction;
                 } else {
-                    // Name from transcript but LSP hasn't refreshed yet — show name, no quota
+                    // Transcript has name but LSP doesn't have it yet — show name, no quota
                     data.activeModel = transcriptActiveModel;
                 }
             }
