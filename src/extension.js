@@ -1188,6 +1188,8 @@ class SentinelViewProvider {
             } else if (msg.command === 'clearLogs') {
                 state.clickLog = []; state.totalClicks = 0; state.clickStats = {};
                 writeState(state); updateStatusBar();
+            } else if (msg.command === 'copyToClipboard') {
+                if (msg.text) vscode.env.clipboard.writeText(msg.text);
             }
         });
 

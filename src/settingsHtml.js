@@ -1219,7 +1219,7 @@ module.exports = function buildSettingsHtml(data) {
                         <div class="skill-desc">\${skill.description || 'No description available.'}</div>
                     </div>
                     <div class="skill-footer">
-                        <button class="btn-copy" onclick="copyPrompt('skill', \${JSON.stringify(skill.name)}, event)">
+                        <button class="btn-copy" data-name='\${skill.name}' onclick="copySkillPrompt(this)">
                             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                             Copy Prompt
                         </button>
@@ -1245,7 +1245,7 @@ module.exports = function buildSettingsHtml(data) {
                         <span style="font-size: 8.5px; font-weight: bold; color: var(--color-green); display: flex; align-items: center; gap: 4px;">
                             <span class="pulse-dot" style="width: 5px; height: 5px; background: var(--color-green);"></span> \${mcp.status}
                         </span>
-                        <button class="btn-copy mcp" onclick="copyPrompt('mcp', \${JSON.stringify(mcp.name)}, event)">
+                        <button class="btn-copy mcp" data-name='\${mcp.name}' onclick="copyMcpPrompt(this)">
                             <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                             Copy Use
                         </button>
@@ -1254,30 +1254,39 @@ module.exports = function buildSettingsHtml(data) {
             \`).join('');
         }
 
-        // ── Clipboard copy — skill uses backticks ─────────────────────────────
-        function copyPrompt(type, name, event) {
-            let promptText = '';
-            if (type === 'skill') {
-                // Backtick wrapping so agent reads skill name as code reference
-                promptText = \`Please use the skill \\\`\${name}\\\`. Read its instructions in the skill's SKILL.md file and follow them exactly to proceed.\`;
-            } else if (type === 'mcp') {
-                promptText = \`Please run the tool using the connected "\${name}" MCP server.\`;
-            }
+        // ── Clipboard copy ─────────────────────────────────────────────────────
+        // navigator.clipboard is NOT reliable in VSCode webview sandbox.
+        // Use vscode.postMessage → vscode.env.clipboard.writeText() in extension.
+        function sendCopyToClipboard(text, btn) {
+            vscode.postMessage({ command: 'copyToClipboard', text });
+            const origHtml = btn.innerHTML;
+            const origColor = btn.style.color;
+            const origBorder = btn.style.borderColor;
+            btn.innerHTML = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>\u00a0Copied!';
+            btn.style.color = 'var(--color-green)';
+            btn.style.borderColor = 'var(--color-green)';
+            setTimeout(function() {
+                btn.innerHTML = origHtml;
+                btn.style.color = origColor;
+                btn.style.borderColor = origBorder;
+            }, 1500);
+        }
 
-            navigator.clipboard.writeText(promptText).then(() => {
-                const btn = event.currentTarget;
-                const origHtml = btn.innerHTML;
-                const origColor = btn.style.color;
-                const origBorder = btn.style.borderColor;
-                btn.innerHTML = \`<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> Copied!\`;
-                btn.style.color = 'var(--color-green)';
-                btn.style.borderColor = 'var(--color-green)';
-                setTimeout(() => {
-                    btn.innerHTML = origHtml;
-                    btn.style.color = origColor;
-                    btn.style.borderColor = origBorder;
-                }, 1500);
-            }).catch(() => {});
+        function copySkillPrompt(btn) {
+            var name = btn.dataset.name;
+            var text = '\u26A1 ACTIVATE SKILL: \`' + name + '\`\n\n'
+                + 'Instructions:\n'
+                + '1. Find and read the SKILL.md file for skill \`' + name + '\` in the skills directory (~/.gemini/config/skills/)\n'
+                + '2. Read ALL instructions in that file completely \u2014 do not skim\n'
+                + '3. Follow them EXACTLY \u2014 no improvising, no summarizing, no skipping steps\n'
+                + '4. Apply this skill to the current task now';
+            sendCopyToClipboard(text, btn);
+        }
+
+        function copyMcpPrompt(btn) {
+            var name = btn.dataset.name;
+            var text = 'Use the connected MCP server: \`' + name + '\`\nCall the appropriate tool on this server to fulfill the current task.';
+            sendCopyToClipboard(text, btn);
         }
 
         // ── Account history re-render ─────────────────────────────────────────
