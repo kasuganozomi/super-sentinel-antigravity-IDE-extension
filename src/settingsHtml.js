@@ -247,11 +247,12 @@ module.exports = function buildSettingsHtml(data) {
             font-weight: 600;
         }
 
-        .tab-content { display: none; }
-        .tab-content.active {
-            display: block;
+        .tab-content {
+            display: none;
             animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
+
+        .tab-content.active { display: block; }
 
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(4px); }
@@ -806,15 +807,15 @@ module.exports = function buildSettingsHtml(data) {
 
         <!-- Tabs: Radar | Skills/MCP | Clicker -->
         <div class="tabs">
-            <button class="tab-btn active" data-tab="radar" onclick="switchTab('radar')">
+            <button class="tab-btn active" onclick="switchTab('radar')">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path><path d="M2 12h20"></path></svg>
                 Radar
             </button>
-            <button class="tab-btn" data-tab="skills" onclick="switchTab('skills')">
+            <button class="tab-btn" onclick="switchTab('skills')">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
                 Skills/MCP
             </button>
-            <button class="tab-btn" data-tab="clicker" onclick="switchTab('clicker')">
+            <button class="tab-btn" onclick="switchTab('clicker')">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
                 Clicker
             </button>
@@ -1076,24 +1077,13 @@ module.exports = function buildSettingsHtml(data) {
             }
         }
 
-        // ── Tab switching ──────────────────────────────────────────────────────────
+        // ── Tab switching — EXACT v2.2.0 pattern (event.currentTarget) ──────────────
         function switchTab(tabId) {
-            document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
-            document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
-            var btn = document.querySelector('[data-tab="' + tabId + '"]');
-            if (btn) btn.classList.add('active');
-            var el = document.getElementById('tab-' + tabId);
-            if (el) el.classList.add('active');
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            event.currentTarget.classList.add('active');
+            document.getElementById('tab-' + tabId).classList.add('active');
         }
-        // Belt-and-suspenders: per-button addEventListener as backup
-        try {
-            document.querySelectorAll('.tab-btn').forEach(function(btn) {
-                btn.addEventListener('click', function() {
-                    var tabId = btn.getAttribute('data-tab');
-                    if (tabId) switchTab(tabId);
-                });
-            });
-        } catch (e) { console.error('[Sentinel] Tab init:', e); }
 
         function updateRangeLabel(id, text) {
             document.getElementById('label-' + id).innerText = text;
@@ -1510,7 +1500,7 @@ module.exports = function buildSettingsHtml(data) {
         window.addEventListener('message', event => {
             const message = event.data;
             if (message.command === 'updateOverwatch') {
-                updateOverwatchUi(message.data);
+                try { updateOverwatchUi(message.data); } catch(e) { console.error('[Sentinel] updateOverwatchUi error:', e); }
             } else if (message.command === 'updateState') {
                 const s = message.state;
                 document.getElementById('check-enabled').checked = s.enabled;
@@ -1552,7 +1542,7 @@ module.exports = function buildSettingsHtml(data) {
         });
 
         // Bootstrap
-        updateOverwatchUi(${JSON.stringify(overwatch).replace(/</g, '\\u003c')});
+        try { updateOverwatchUi(${JSON.stringify(overwatch).replace(/</g, '\\u003c')}); } catch(e) { console.error('[Sentinel] bootstrap error:', e); }
     </script>
 </body>
 </html>`;
