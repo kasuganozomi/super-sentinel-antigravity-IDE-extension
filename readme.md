@@ -1,7 +1,7 @@
 # Antigravity Super Sentinel
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.2.1-purple.svg?style=for-the-badge&logo=visual-studio-code" alt="Version" />
+  <img src="https://img.shields.io/badge/version-2.2.2-purple.svg?style=for-the-badge&logo=visual-studio-code" alt="Version" />
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20WSL-blue.svg?style=for-the-badge" alt="Platform" />
   <img src="https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge" alt="License" />
   <img src="https://img.shields.io/badge/Built%20For-Antigravity%20IDE-orange.svg?style=for-the-badge" alt="Built For" />
@@ -109,6 +109,23 @@ Detail your skill's instructions here...
 ---
 
 ## 📋 Changelog
+
+### v2.2.2 — Active Model Indicator Fix (2026-06-26)
+
+> **Hotfix for active model indicator jumping between models.**
+
+- 🔧 **Restored transcript as Priority 1** for active model detection — reads
+  `USER_SETTINGS_CHANGE` system message injected by IDE on every model switch,
+  gives exact human-readable display name with no ID mapping required.
+- 🔧 **SQLite kept as Priority 2** — fallback for cross-session persistence
+  when no model-switch event exists in the current session transcript.
+- ❌ **Removed `modelsList[0]` arbitrary fallback** (root cause of random jumping
+  between Opus / Gemini / GPT depending on LSP response ordering).
+- 🧲 **Added sticky "last-known-good" cache** — when both P1 and P2 fail, the
+  indicator freezes at the last successfully resolved value instead of jumping
+  or resetting to a hardcoded default.
+- 🧹 Cleaned up orphan `cachedTranscriptActiveModel` variable and dead code
+  from the intermediate SQLite-only attempt.
 
 ### v2.2.1 — Performance Refactor (2026-06-25)
 
