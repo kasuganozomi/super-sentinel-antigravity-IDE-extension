@@ -10,7 +10,7 @@ const buildSettingsHtml = require('./settingsHtml');
 
 // ─── Non-blocking async shell execution ──────────────────────────────────────
 // All periodic/polling shell commands MUST use this instead of execSync.
-// execSync is only kept for WSL one-time path detection (runs once, then pinned).
+// execSync is only kept for WSL one-time path detection (runs once at startup).
 function execAsync(cmd, opts = {}) {
     return new Promise((resolve, reject) => {
         exec(cmd, { timeout: 8000, encoding: 'utf8', ...opts }, (err, stdout) => {
@@ -27,18 +27,22 @@ const OLD_TAG_START = '<!-- ANTIGRAVITY-CLEAN-AUTO-ACCEPT-START -->';
 const OLD_TAG_END   = '<!-- ANTIGRAVITY-CLEAN-AUTO-ACCEPT-END -->';
 
 // ─── Runtime handles ──────────────────────────────────────────────────────────
-let stateWatcher         = null;
-let sidebarProvider      = null;
-let statusBarItem        = null;
-let lspPollInterval      = null;
-let childSessionInterval = null;
-let sqliteRefreshInterval = null;
+let stateWatcher            = null;
+let sidebarProvider         = null;
+let statusBarItem           = null;
+let lspPollInterval         = null;
+let sqliteRefreshInterval   = null;
+let childSessionInterval    = null;
+let transcriptRefreshInterval = null;   // NEW: async transcript background refresh
+let sessionScanInterval     = null;     // NEW: async session discovery
+let skillsRefreshInterval   = null;     // NEW: async skills background refresh
+let mcpRefreshInterval      = null;     // NEW: async MCP config background refresh
 
 // ─── LSP data cache ───────────────────────────────────────────────────────────
 let cachedLspData   = { email: 'offline', plan: 'Free', modelsList: [] };
 let lspQueryPending = false;    // concurrency guard — prevents overlapping queryLsp() calls
 
-// ─── Session / transcript cache ───────────────────────────────────────────────
+// ─── Session / transcript cache (populated by background async intervals) ─────
 let cachedLatestSession        = null;
 let lastSessionScanTime        = 0;
 let cachedTranscriptSteps       = [];
@@ -47,8 +51,8 @@ let cachedTranscriptTotalChars  = 0;
 let cachedTranscriptPath        = '';
 let cachedTranscriptMtime       = 0;
 
-// Sticky "last known good" active model — used when both transcript and SQLite fail,
-// so the indicator stays frozen at the last confident value instead of jumping.
+// Sticky "last known good" active model — frozen when both P1 and P2 fail,
+// so indicator stays at last confident value instead of jumping to wrong model.
 let lastResolvedActiveModel                  = null;
 let lastResolvedActiveModelExpiration        = null;
 let lastResolvedActiveModelRemainingFraction = 0.0;
@@ -59,32 +63,48 @@ let lastSqliteQueryTime  = 0;
 let sqliteRefreshPending = false;   // prevents concurrent python subprocess launches
 
 // ─── gatherSentinelData result cache ─────────────────────────────────────────
-// Prevents triple-compute on same tick (called from LSP poll, sidebar poll, file watcher simultaneously)
+// Prevents redundant computation when called from multiple paths on same tick.
 let _sentinelCache     = null;
 let _sentinelCacheTime = 0;
 const SENTINEL_TTL = 4000;          // 4 s — fresh enough for dashboard
 
 // ─── isScriptInjected result cache ───────────────────────────────────────────
-// Avoids reading large workbench.html on every status bar refresh
+// Avoids reading large workbench.html on every status bar refresh.
 let _injectedCache     = null;      // null = not yet computed
 let _injectedCacheTime = 0;
 const INJECTED_TTL = 10000;         // 10 s
 
 // ─── Workbench path cache (file-system probe, stable at runtime) ───────────────
-// undefined = never computed; null = not found; string = valid path
 let _wbPathCache     = undefined;
 let _wbPathCacheTime = 0;
 
-// ─── Sub-caches inside gatherSentinelData (slow-changing data) ───────────────
+// ─── readState TTL cache ──────────────────────────────────────────────────────
+// Prevents double-read per update cycle (updateStatusBar + gatherSentinelData
+// both call readState — they now share a 1.5 s cache instead of reading twice).
+let _stateCache     = null;
+let _stateCacheTime = 0;
+const STATE_TTL = 1500;             // 1.5 s
+
+// ─── Account cache write guard ────────────────────────────────────────────────
+// Writes account cache to disk at most every 30 s AND only when data changes.
+// Eliminates the "write every 4 s" self-triggering watcher loop.
+let _lastAccountWriteTime = 0;
+let _lastAccountHash      = '';
+const ACCOUNT_WRITE_INTERVAL = 30000;  // 30 s minimum between disk writes
+
+// ─── State file own-write guard ───────────────────────────────────────────────
+// Track the timestamp of our own writeState() calls so the file watcher can
+// ignore the event it generated (prevents self-triggered updateStatusBar loops).
+let _ownStateWriteTime = 0;
+
+// ─── Skills / MCP caches (populated by background async intervals) ─────────────
 let _cachedSkills     = null;
 let _cachedSkillsTime = 0;
-const SKILLS_TTL = 60000;           // rescan skills directory once per minute
 
 let _cachedMcpServers = null;
 let _cachedMcpTime    = 0;
-const MCP_TTL = 30000;              // rescan mcp_config.json every 30 s
 
-// ─── Child sessions cache (refreshed by dedicated 30 s interval) ───────────────
+// ─── Child sessions cache (populated by background 30 s interval) ──────────────
 let cachedChildSessions = [];
 
 // ─── One-time WSL path cache (computed on first access, then pinned forever) ──
@@ -123,7 +143,7 @@ function mapLspData(json) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HTTP HELPERS (already async — unchanged)
+// HTTP HELPERS (fully async — no changes)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function postToLsp(port, csrf) {
@@ -347,18 +367,244 @@ async function refreshSqliteAsync() {
     }
 }
 
-// Returns cached data instantly. Triggers async background refresh when cache is stale.
+// Returns cached data instantly. Background refresh is driven by sqliteRefreshInterval.
 function getSqliteModelInfo() {
-    const now = Date.now();
-    if (!sqliteRefreshPending && (now - lastSqliteQueryTime > 8000)) {
-        refreshSqliteAsync();   // fire-and-forget, does NOT block
-    }
     return cachedSqliteData;
 }
 
 function getActiveModelIdFromSqlite() {
     const modelInfo = getSqliteModelInfo();
     return modelInfo ? modelInfo.activeModelId : null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ASYNC SESSION SCAN — runs in background every 15 s
+// Fully async (fs.promises). NEVER called from gatherSentinelData() hot path.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function refreshSessionAsync() {
+    try {
+        const homedir  = os.homedir();
+        const brainDir = path.join(homedir, '.gemini', 'antigravity-ide', 'brain');
+
+        let entries;
+        try {
+            entries = await fs.promises.readdir(brainDir);
+        } catch (e) { return; }   // brainDir doesn't exist yet
+
+        let latestTime    = 0;
+        let latestSession = null;
+
+        for (const session of entries) {
+            const tPath = path.join(brainDir, session, '.system_generated', 'logs', 'transcript.jsonl');
+            try {
+                const stat = await fs.promises.stat(tPath);
+                if (stat.mtimeMs > latestTime) {
+                    latestTime    = stat.mtimeMs;
+                    latestSession = {
+                        id:             session,
+                        path:           path.join(brainDir, session),
+                        transcriptPath: tPath
+                    };
+                }
+            } catch (e) {}  // file doesn't exist for this session — skip
+        }
+
+        if (latestSession) cachedLatestSession = latestSession;
+        lastSessionScanTime = Date.now();
+    } catch (e) {}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ASYNC TRANSCRIPT PARSE — runs in background every 3 s
+// Fully async (fs.promises). Populates transcript caches.
+// NEVER blocks the main thread. gatherSentinelData() reads from these caches.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function refreshTranscriptAsync() {
+    try {
+        if (!cachedLatestSession) return;
+        const tPath = cachedLatestSession.transcriptPath;
+
+        // Async stat — check if file changed since last parse
+        let stat;
+        try {
+            stat = await fs.promises.stat(tPath);
+        } catch (e) { return; }
+
+        // Nothing changed — skip expensive parse
+        if (tPath === cachedTranscriptPath && stat.mtimeMs === cachedTranscriptMtime) return;
+
+        // Async read — no main-thread blocking even for large transcripts
+        const content = await fs.promises.readFile(tPath, 'utf8');
+        const lines   = content.trim().split('\n').filter(l => l.trim().length > 0);
+
+        let totalCharacters       = 0;
+        let transcriptActiveModel = null;
+        const steps               = [];
+
+        for (const line of lines) {
+            try {
+                const step = JSON.parse(line);
+                steps.push({
+                    step_index:     step.step_index,
+                    source:         step.source,
+                    type:           step.type,
+                    status:         step.status,
+                    created_at:     step.created_at,
+                    content_length: step.content ? step.content.length : 0,
+                    tool_calls:     step.tool_calls ? step.tool_calls.map(tc => {
+                        let toolArgs = {};
+                        try { toolArgs = typeof tc.args === 'string' ? JSON.parse(tc.args) : tc.args; } catch (e) {}
+                        return {
+                            name:    tc.name,
+                            summary: toolArgs.toolSummary || toolArgs.toolAction || tc.name || ''
+                        };
+                    }) : []
+                });
+
+                if (step.content) {
+                    totalCharacters += step.content.length;
+                    // Priority 1: transcript-based model detection.
+                    // System injects USER_SETTINGS_CHANGE on every model switch
+                    // with exact human-readable display name — no ID mapping needed.
+                    if (step.content.includes('Model Selection')) {
+                        const match = step.content.match(/Model Selection[`'"\\]*\s+from\s+(.*?)\s+to\s+(.*?)(?:\.\s|\n|<|$)/i);
+                        if (match && match[2]) {
+                            let toVal = match[2].trim();
+                            if (toVal.endsWith('.')) toVal = toVal.slice(0, -1);
+                            transcriptActiveModel = toVal.replace(/[`]/g, '').trim();
+                        }
+                    }
+                }
+            } catch (e) {}
+        }
+
+        // Commit to shared caches — gatherSentinelData() reads these
+        cachedTranscriptSteps       = steps;
+        cachedTranscriptActiveModel = transcriptActiveModel;
+        cachedTranscriptTotalChars  = totalCharacters;
+        cachedTranscriptPath        = tPath;
+        cachedTranscriptMtime       = stat.mtimeMs;
+
+        // Invalidate sentinel cache so dashboard picks up new transcript data
+        _sentinelCache     = null;
+        _sentinelCacheTime = 0;
+
+    } catch (e) {}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ASYNC SKILLS SCAN — runs in background every 60 s
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function refreshSkillsAsync() {
+    try {
+        const homedir   = os.homedir();
+        const skillsDir = path.join(homedir, '.gemini', 'config', 'skills');
+
+        let folders;
+        try {
+            folders = await fs.promises.readdir(skillsDir);
+        } catch (e) {
+            _cachedSkills     = [];
+            _cachedSkillsTime = Date.now();
+            return;
+        }
+
+        const skills = [];
+        for (const folder of folders) {
+            const skillMdPath = path.join(skillsDir, folder, 'SKILL.md');
+            try {
+                const skillMd   = await fs.promises.readFile(skillMdPath, 'utf8');
+                let skillName   = folder;
+                let skillDesc   = '';
+                const matchName = skillMd.match(/name:\s*(.*)/i);
+                const matchDesc = skillMd.match(/description:\s*>([\s\S]*?)---/i) || skillMd.match(/description:\s*(.*)/i);
+                if (matchName) skillName = matchName[1].trim();
+                if (matchDesc) skillDesc = matchDesc[1].trim().replace(/\n/g, ' ');
+                skills.push({ name: skillName, description: skillDesc });
+            } catch (e) {}
+        }
+
+        _cachedSkills     = skills;
+        _cachedSkillsTime = Date.now();
+    } catch (e) {}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ASYNC MCP CONFIG SCAN — runs in background every 30 s
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function refreshMcpAsync() {
+    try {
+        const homedir = os.homedir();
+        const mcpPath = path.join(homedir, '.gemini', 'config', 'mcp_config.json');
+        try {
+            const raw     = await fs.promises.readFile(mcpPath, 'utf8');
+            const mcpJson = JSON.parse(raw);
+            const servers = [];
+            if (mcpJson && mcpJson.mcpServers) {
+                for (const serverName in mcpJson.mcpServers) {
+                    servers.push({
+                        name:    serverName,
+                        command: mcpJson.mcpServers[serverName].command,
+                        status:  'Active'
+                    });
+                }
+            }
+            _cachedMcpServers = servers;
+            _cachedMcpTime    = Date.now();
+        } catch (e) {
+            _cachedMcpServers = [];
+            _cachedMcpTime    = Date.now();
+        }
+    } catch (e) {}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ASYNC CHILD SESSION REFRESH — runs on dedicated 30 s interval
+// Fixed to use fs.promises instead of blocking fs.readdirSync.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function refreshChildSessionsAsync() {
+    try {
+        const homedir          = os.homedir();
+        const conversationsDir = path.join(homedir, '.gemini', 'antigravity-ide', 'conversations');
+        const agentapiBinName  = process.platform === 'win32' ? 'agentapi.bat' : 'agentapi';
+        const agentapiPath     = path.join(homedir, '.gemini', 'antigravity-ide', 'bin', agentapiBinName);
+
+        // Check existence without blocking (these are quick existsSync on local paths)
+        if (!fs.existsSync(conversationsDir) || !fs.existsSync(agentapiPath)) return;
+        if (!cachedLatestSession) return;
+
+        const sessionId = cachedLatestSession.id;
+
+        // Use fs.promises for async directory read
+        let files;
+        try {
+            files = await fs.promises.readdir(conversationsDir);
+        } catch (e) { return; }
+
+        const dbFiles = files.filter(f => f.endsWith('.db') && !f.includes(sessionId));
+
+        const results = [];
+        for (const dbFile of dbFiles) {
+            const subSessionId = dbFile.substring(0, dbFile.length - 3);
+            try {
+                const metadataRaw = await execAsync(`"${agentapiPath}" get-conversation-metadata ${subSessionId}`);
+                const metaData    = JSON.parse(metadataRaw);
+                const parentId    = metaData?.response?.conversationMetadata?.metadata?.parentConversationId;
+                if (parentId === sessionId) {
+                    results.push({
+                        id:           subSessionId,
+                        nestingDepth: metaData?.response?.conversationMetadata?.metadata?.nestingDepth || 1
+                    });
+                }
+            } catch (e) {}
+        }
+        cachedChildSessions = results;
+    } catch (e) {}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -376,8 +622,8 @@ function writeFile(filePath, content) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WSL PATH HELPERS — computed once at first access, then pinned forever
-// execSync is acceptable here: it's a one-time cost at startup, never repeated.
+// WSL PATH HELPERS — computed once at first access, then pinned forever.
+// execSync is acceptable: one-time cost at startup, never repeated.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function getWslWindowsLocalAppData() {
@@ -477,7 +723,7 @@ function _computeWslAppData() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WORKBENCH PATH — cached with TTL (60 s when found, 5 s when not found)
+// WORKBENCH PATH — TTL cached (60 s when found, 5 s when not found)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function getWorkbenchPath() {
@@ -545,7 +791,7 @@ function getProductJsonPath() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CHECKSUM UPDATE (one-time on inject/remove, not periodic)
+// CHECKSUM UPDATE (one-time on inject/remove — not periodic)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function updateChecksums() {
@@ -643,7 +889,7 @@ function buildScriptContent(context, wbPath) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// STATE FILE HELPERS
+// STATE FILE HELPERS — with TTL cache and own-write guard
 // ─────────────────────────────────────────────────────────────────────────────
 
 function getStateFilePath() {
@@ -652,19 +898,28 @@ function getStateFilePath() {
     return path.join(path.dirname(wbPath), 'ag-super-sentinel-state.json');
 }
 
+// readState() with TTL cache (1.5 s).
+// Prevents double-read per update cycle — updateStatusBar + gatherSentinelData
+// both call this, they now share the same cached object.
 function readState() {
+    const now = Date.now();
+    if (_stateCache && (now - _stateCacheTime < STATE_TTL)) return _stateCache;
+
     const statePath = getStateFilePath();
     if (statePath && fs.existsSync(statePath)) {
         try {
             const raw   = fs.readFileSync(statePath, 'utf8');
             const state = JSON.parse(raw);
             if (!state.cachedAccounts) state.cachedAccounts = [];
+            _stateCache     = state;
+            _stateCacheTime = now;
             return state;
         } catch (e) {
             console.error('[Sentinel] Failed to parse state JSON:', e.message);
         }
     }
-    return {
+
+    const defaultState = {
         enabled: true,
         scrollEnabled: true,
         scrollPauseMs: 7000,
@@ -689,13 +944,22 @@ function readState() {
         clickLog: [],
         cachedAccounts: []
     };
+    _stateCache     = defaultState;
+    _stateCacheTime = now;
+    return defaultState;
 }
 
+// writeState() records its timestamp so the file watcher can ignore the
+// event it self-generates (prevents spurious updateStatusBar calls).
 function writeState(state) {
     const statePath = getStateFilePath();
     if (!statePath) return;
     try {
+        _ownStateWriteTime = Date.now();
         writeFile(statePath, JSON.stringify(state, null, 4));
+        // Update in-memory cache immediately to reflect what we just wrote
+        _stateCache     = state;
+        _stateCacheTime = Date.now();
     } catch (e) {
         console.error('[Sentinel] Failed to write state:', e.message);
     }
@@ -752,7 +1016,7 @@ function injectScript(context, silent = false) {
         // Invalidate injection status cache immediately
         _injectedCache     = true;
         _injectedCacheTime = Date.now();
-        // Pin workbench path (it's now confirmed valid)
+        // Pin workbench path (now confirmed valid)
         _wbPathCache       = wbPath;
         _wbPathCacheTime   = Date.now();
 
@@ -827,8 +1091,7 @@ function isScriptInjected(forceRefresh = false) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// STATUS BAR
-// All heavy dependencies are now TTL-cached, so this call is lightweight.
+// STATUS BAR — all dependencies are TTL-cached, call cost is negligible
 // ─────────────────────────────────────────────────────────────────────────────
 
 function formatCountdown(expirationSec) {
@@ -844,11 +1107,10 @@ function formatCountdown(expirationSec) {
 function updateStatusBar() {
     if (!statusBarItem) return;
 
-    // All of these are now nearly free (TTL cache hits)
     const wbPath    = getWorkbenchPath();
-    const state     = readState();
+    const state     = readState();         // 1.5 s TTL cache — usually cache hit
     const injected  = wbPath ? isScriptInjected() : false;
-    const data      = gatherSentinelData();
+    const data      = gatherSentinelData();    // 4 s TTL cache + zero file I/O
 
     const activeModel = data.activeModel || 'Gemini 3.5 Flash (High)';
     const quotaPct    = Math.round((data.activeModelRemainingFraction || 0.0) * 100);
@@ -881,7 +1143,7 @@ function updateStatusBar() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// STATE FILE WATCHER
+// STATE FILE WATCHER — with self-write guard and state cache invalidation
 // ─────────────────────────────────────────────────────────────────────────────
 
 function setupStateFileWatcher() {
@@ -892,6 +1154,15 @@ function setupStateFileWatcher() {
     try {
         stateWatcher = fs.watch(statePath, (eventType) => {
             if (eventType === 'change') {
+                // Ignore events triggered by our own writeState() calls.
+                // 300 ms window covers any OS-level write buffer flush delay.
+                if (Date.now() - _ownStateWriteTime < 300) return;
+
+                // Genuine external write (e.g. auto-clicker script reporting a click):
+                // invalidate state cache so next readState() gets fresh data.
+                _stateCache     = null;
+                _stateCacheTime = 0;
+
                 const latestState = readState();
                 updateStatusBar();
 
@@ -910,45 +1181,9 @@ function setupStateFileWatcher() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CHILD SESSION REFRESH — async, runs on dedicated 30 s interval
-// Moves the expensive execAsync(agentapi) loop off the main data-gather path.
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function refreshChildSessionsAsync() {
-    try {
-        const homedir          = os.homedir();
-        const conversationsDir = path.join(homedir, '.gemini', 'antigravity-ide', 'conversations');
-        const agentapiBinName  = process.platform === 'win32' ? 'agentapi.bat' : 'agentapi';
-        const agentapiPath     = path.join(homedir, '.gemini', 'antigravity-ide', 'bin', agentapiBinName);
-
-        if (!fs.existsSync(conversationsDir) || !fs.existsSync(agentapiPath)) return;
-        if (!cachedLatestSession) return;
-
-        const sessionId = cachedLatestSession.id;
-        const files     = fs.readdirSync(conversationsDir);
-        const dbFiles   = files.filter(f => f.endsWith('.db') && !f.includes(sessionId));
-
-        const results = [];
-        for (const dbFile of dbFiles) {
-            const subSessionId = dbFile.substring(0, dbFile.length - 3);
-            try {
-                const metadataRaw = await execAsync(`"${agentapiPath}" get-conversation-metadata ${subSessionId}`);
-                const metaData    = JSON.parse(metadataRaw);
-                const parentId    = metaData?.response?.conversationMetadata?.metadata?.parentConversationId;
-                if (parentId === sessionId) {
-                    results.push({
-                        id:           subSessionId,
-                        nestingDepth: metaData?.response?.conversationMetadata?.metadata?.nestingDepth || 1
-                    });
-                }
-            } catch (e) {}
-        }
-        cachedChildSessions = results;
-    } catch (e) {}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// GATHER SENTINEL DATA — TTL cached to prevent redundant FS work
+// GATHER SENTINEL DATA — 100% memory-only hot path.
+// All file I/O has been moved to dedicated background async intervals.
+// This function assembles data from caches they populate — zero blocking.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function gatherSentinelData() {
@@ -980,34 +1215,7 @@ function gatherSentinelData() {
     };
 
     try {
-        const homedir  = os.homedir();
-        const brainDir = path.join(homedir, '.gemini', 'antigravity-ide', 'brain');
-        if (!fs.existsSync(brainDir)) {
-            _sentinelCache     = data;
-            _sentinelCacheTime = now;
-            return data;
-        }
-
-        // ── Session discovery: rescan every 10 s ────────────────────────────
-        if (!cachedLatestSession || (now - lastSessionScanTime > 10000)) {
-            const sessions   = fs.readdirSync(brainDir);
-            let latestTime   = 0;
-            let latestSession = null;
-
-            for (const session of sessions) {
-                const tPath = path.join(brainDir, session, '.system_generated', 'logs', 'transcript.jsonl');
-                if (fs.existsSync(tPath)) {
-                    const stat = fs.statSync(tPath);
-                    if (stat.mtimeMs > latestTime) {
-                        latestTime    = stat.mtimeMs;
-                        latestSession = { id: session, path: path.join(brainDir, session), transcriptPath: tPath };
-                    }
-                }
-            }
-            if (latestSession) cachedLatestSession = latestSession;
-            lastSessionScanTime = now;
-        }
-
+        // ── Session — read from background async cache (no file I/O here) ───
         if (!cachedLatestSession) {
             _sentinelCache     = data;
             _sentinelCacheTime = now;
@@ -1017,73 +1225,16 @@ function gatherSentinelData() {
         data.sessionActive = true;
         data.sessionId     = cachedLatestSession.id;
 
-        // ── Transcript parsing: only re-parse when file actually changed ────
-        const tPath = cachedLatestSession.transcriptPath;
-        const stat  = fs.statSync(tPath);
-
-        if (tPath !== cachedTranscriptPath || stat.mtimeMs !== cachedTranscriptMtime) {
-            const content = fs.readFileSync(tPath, 'utf8');
-            const lines   = content.trim().split('\n').filter(l => l.trim().length > 0);
-            let totalCharacters     = 0;
-            let transcriptActiveModel = null;
-            const steps = [];
-
-            for (const line of lines) {
-                try {
-                    const step = JSON.parse(line);
-                    steps.push({
-                        step_index:     step.step_index,
-                        source:         step.source,
-                        type:           step.type,
-                        status:         step.status,
-                        created_at:     step.created_at,
-                        content_length: step.content ? step.content.length : 0,
-                        tool_calls:     step.tool_calls ? step.tool_calls.map(tc => {
-                            let toolArgs = {};
-                            try { toolArgs = typeof tc.args === 'string' ? JSON.parse(tc.args) : tc.args; } catch (e) {}
-                            return {
-                                name:    tc.name,
-                                summary: toolArgs.toolSummary || toolArgs.toolAction || tc.name || ''
-                            };
-                        }) : []
-                    });
-
-                    if (step.content) {
-                        totalCharacters += step.content.length;
-                        // Priority 1: transcript-based model detection.
-                        // The system injects a USER_SETTINGS_CHANGE message every time
-                        // the user switches models, containing the exact display name.
-                        if (step.content.includes('Model Selection')) {
-                            const match = step.content.match(/Model Selection[`'"\\]*\s+from\s+(.*?)\s+to\s+(.*?)(?:\.\s|\n|<|$)/i);
-                            if (match && match[2]) {
-                                let toVal = match[2].trim();
-                                if (toVal.endsWith('.')) toVal = toVal.slice(0, -1);
-                                transcriptActiveModel = toVal.replace(/[`]/g, '').trim();
-                            }
-                        }
-                    }
-                } catch (e) {}
-            }
-
-            cachedTranscriptSteps       = steps;
-            cachedTranscriptActiveModel  = transcriptActiveModel;
-            cachedTranscriptTotalChars   = totalCharacters;
-            cachedTranscriptPath         = tPath;
-            cachedTranscriptMtime        = stat.mtimeMs;
-        }
-
+        // ── Transcript — read from background async cache (no file I/O) ────
         data.steps      = cachedTranscriptSteps;
         data.stepsCount = cachedTranscriptSteps.length;
         const totalCharacters       = cachedTranscriptTotalChars;
         const transcriptActiveModel = cachedTranscriptActiveModel;
 
-        // ── Active model resolution ───────────────────────────────────────────
-        // Priority 1: Transcript — exact display name from USER_SETTINGS_CHANGE
-        //             system message (injected by IDE on every model switch).
-        //             Direct name match against LSP list, no ID mapping needed.
-        // Priority 2: SQLite — activeModelId from IDE's own DB, match by ID.
-        //             Reliable across sessions but requires Python + ID mapping.
-        // No list[0] fallback — if both fail, keep last known good value (sticky).
+        // ── Active model resolution (memory-only) ────────────────────────────
+        // P1: transcript display name (injected by IDE on model switch, exact match)
+        // P2: SQLite activeModelId → LSP ID lookup
+        // Sticky: freeze at last known good if both fail
         if (cachedLspData && cachedLspData.modelsList && cachedLspData.modelsList.length > 0) {
             data.email      = cachedLspData.email;
             data.plan       = cachedLspData.plan;
@@ -1091,12 +1242,12 @@ function gatherSentinelData() {
 
             let activeModelObj = null;
 
-            // P1: transcript name — exact display name match
+            // P1: transcript name — exact display name match, no ID mapping needed
             if (transcriptActiveModel) {
                 activeModelObj = cachedLspData.modelsList.find(m => m.name === transcriptActiveModel) || null;
             }
 
-            // P2: SQLite ID — match by internal model ID
+            // P2: SQLite ID — match by internal model ID (cross-session fallback)
             if (!activeModelObj) {
                 const sqliteActiveId = getActiveModelIdFromSqlite();
                 if (sqliteActiveId) {
@@ -1113,12 +1264,12 @@ function gatherSentinelData() {
                 lastResolvedActiveModelExpiration        = activeModelObj.expiration;
                 lastResolvedActiveModelRemainingFraction = activeModelObj.remainingFraction;
             } else if (lastResolvedActiveModel) {
-                // Both sources failed — freeze at last known good value
+                // Both sources failed — freeze indicator at last known good
                 data.activeModel                  = lastResolvedActiveModel;
                 data.activeModelExpiration        = lastResolvedActiveModelExpiration;
                 data.activeModelRemainingFraction = lastResolvedActiveModelRemainingFraction;
             }
-            // If no lastResolved either: keep data.activeModel as safe default string
+            // If no lastResolved: keep safe default string already in data object
         } else {
             // LSP not yet available — use SQLite model name directly
             const modelInfo = getSqliteModelInfo();
@@ -1131,14 +1282,13 @@ function gatherSentinelData() {
                 data.activeModelRemainingFraction = modelInfo.remainingFraction;
                 data.modelsList                   = modelInfo.models || [];
             } else if (lastResolvedActiveModel) {
-                // SQLite also unavailable — freeze at last known good
                 data.activeModel                  = lastResolvedActiveModel;
                 data.activeModelExpiration        = lastResolvedActiveModelExpiration;
                 data.activeModelRemainingFraction = lastResolvedActiveModelRemainingFraction;
             }
         }
 
-        // ── Context limits per model ─────────────────────────────────────────
+        // ── Context limits (memory-only lookup table) ────────────────────────
         const MODEL_LIMITS = {
             'Gemini Pro 3.1 High':         { limit: 2000000, warn: 1500000 },
             'Gemini 3.1 Pro (High)':       { limit: 2000000, warn: 1500000 },
@@ -1164,8 +1314,9 @@ function gatherSentinelData() {
         data.warningThreshold = limits.warn;
         data.contextLimit     = limits.limit;
 
-        // ── Browser recordings (latest 8 frames) ────────────────────────────
-        const recDir = path.join(homedir, '.gemini', 'antigravity-ide', 'browser_recordings', data.sessionId);
+        // ── Browser recordings — small local dir, existsSync + readdirSync is fast ─
+        const homedir = os.homedir();
+        const recDir  = path.join(homedir, '.gemini', 'antigravity-ide', 'browser_recordings', data.sessionId);
         if (fs.existsSync(recDir)) {
             const files      = fs.readdirSync(recDir);
             const imageFiles = files
@@ -1175,80 +1326,47 @@ function gatherSentinelData() {
             data.browserFrames = imageFiles.map(f => path.join(recDir, f));
         }
 
-        // ── Skills scan — TTL sub-cache (rescan once per minute) ─────────────
-        if (!_cachedSkills || now - _cachedSkillsTime > SKILLS_TTL) {
-            const skills    = [];
-            const skillsDir = path.join(homedir, '.gemini', 'config', 'skills');
-            if (fs.existsSync(skillsDir)) {
-                for (const folder of fs.readdirSync(skillsDir)) {
-                    const skillMdPath = path.join(skillsDir, folder, 'SKILL.md');
-                    if (fs.existsSync(skillMdPath)) {
-                        const skillMd   = fs.readFileSync(skillMdPath, 'utf8');
-                        let skillName   = folder;
-                        let skillDesc   = '';
-                        const matchName = skillMd.match(/name:\s*(.*)/i);
-                        const matchDesc = skillMd.match(/description:\s*>([\s\S]*?)---/i) || skillMd.match(/description:\s*(.*)/i);
-                        if (matchName) skillName = matchName[1].trim();
-                        if (matchDesc) skillDesc = matchDesc[1].trim().replace(/\n/g, ' ');
-                        skills.push({ name: skillName, description: skillDesc });
-                    }
-                }
-            }
-            _cachedSkills     = skills;
-            _cachedSkillsTime = now;
-        }
-        data.skills = _cachedSkills;
-
-        // ── MCP config scan — TTL sub-cache (rescan every 30 s) ─────────────
-        if (!_cachedMcpServers || now - _cachedMcpTime > MCP_TTL) {
-            const servers  = [];
-            const mcpPath  = path.join(homedir, '.gemini', 'config', 'mcp_config.json');
-            if (fs.existsSync(mcpPath)) {
-                try {
-                    const mcpJson = JSON.parse(fs.readFileSync(mcpPath, 'utf8'));
-                    if (mcpJson && mcpJson.mcpServers) {
-                        for (const serverName in mcpJson.mcpServers) {
-                            servers.push({
-                                name:    serverName,
-                                command: mcpJson.mcpServers[serverName].command,
-                                status:  'Active'
-                            });
-                        }
-                    }
-                } catch (e) {}
-            }
-            _cachedMcpServers = servers;
-            _cachedMcpTime    = now;
-        }
-        data.mcpServers = _cachedMcpServers;
-
-        // ── Child sessions: read from cache (refreshed by 30 s interval) ─────
+        // ── Skills / MCP / child sessions — read from background async caches ─
+        data.skills        = _cachedSkills     || [];
+        data.mcpServers    = _cachedMcpServers || [];
         data.childSessions = cachedChildSessions;
 
-        // ── Account cache update ─────────────────────────────────────────────
+        // ── Account cache ────────────────────────────────────────────────────
+        // readState() is TTL-cached (1.5 s) — usually a memory-only operation.
+        // Account persistence is rate-limited and change-gated — no write if
+        // data unchanged and less than 30 s since last write.
         const state = readState();
         if (!state.cachedAccounts) state.cachedAccounts = [];
 
         const activeEmail = data.email;
         if (activeEmail && activeEmail !== 'offline') {
-            let accountEntry = state.cachedAccounts.find(acc => acc.email === activeEmail);
-            if (!accountEntry) {
-                accountEntry = { email: activeEmail };
-                state.cachedAccounts.push(accountEntry);
+            // Change detection — build a hash of what matters for account cache
+            const accountHash = `${activeEmail}|${data.plan}|${data.activeModel}|${Math.round((data.activeModelRemainingFraction || 0) * 100)}`;
+            const timeSinceWrite = now - _lastAccountWriteTime;
+
+            if (accountHash !== _lastAccountHash || timeSinceWrite >= ACCOUNT_WRITE_INTERVAL) {
+                // Only touch disk if something actually changed OR 30 s interval passed
+                let accountEntry = state.cachedAccounts.find(acc => acc.email === activeEmail);
+                if (!accountEntry) {
+                    accountEntry = { email: activeEmail };
+                    state.cachedAccounts.push(accountEntry);
+                }
+                accountEntry.plan                         = data.plan || 'Free';
+                accountEntry.activeModel                  = data.activeModel;
+                accountEntry.activeModelExpiration        = data.activeModelExpiration;
+                accountEntry.activeModelRemainingFraction = data.activeModelRemainingFraction;
+                accountEntry.modelsList                   = data.modelsList || [];
+                accountEntry.lastSeen                     = now;
+                accountEntry.isActive                     = true;
+
+                state.cachedAccounts.forEach(acc => {
+                    if (acc.email !== activeEmail) acc.isActive = false;
+                });
+
+                _lastAccountHash      = accountHash;
+                _lastAccountWriteTime = now;
+                writeState(state);  // _ownStateWriteTime set inside writeState()
             }
-            accountEntry.plan                         = data.plan || 'Free';
-            accountEntry.activeModel                  = data.activeModel;
-            accountEntry.activeModelExpiration        = data.activeModelExpiration;
-            accountEntry.activeModelRemainingFraction = data.activeModelRemainingFraction;
-            accountEntry.modelsList                   = data.modelsList || [];
-            accountEntry.lastSeen                     = Date.now();
-            accountEntry.isActive                     = true;
-
-            state.cachedAccounts.forEach(acc => {
-                if (acc.email !== activeEmail) acc.isActive = false;
-            });
-
-            writeState(state);
         }
         data.cachedAccounts = state.cachedAccounts || [];
 
@@ -1256,7 +1374,6 @@ function gatherSentinelData() {
         console.error('[Sentinel] Data gathering error:', err.message);
     }
 
-    // ── Store in TTL cache ───────────────────────────────────────────────────
     _sentinelCache     = data;
     _sentinelCacheTime = now;
     return data;
@@ -1296,7 +1413,7 @@ class SentinelViewProvider {
             version:   this._context.extension?.packageJSON?.version || '1.0.0'
         });
 
-        // Dashboard polling — 5 s (was 2 s). Data stays fresh via underlying 4 s cache.
+        // Dashboard poll: 5 s. gatherSentinelData() is a 4 s TTL cache hit — fast.
         const pollInterval = setInterval(() => {
             if (webviewView.visible) {
                 try {
@@ -1314,7 +1431,7 @@ class SentinelViewProvider {
             }
         }, 5000);
 
-        // Handle messages from Webview
+        // Handle messages from Webview (user interactions)
         webviewView.webview.onDidReceiveMessage((msg) => {
             const state = readState();
             if (msg.command === 'toggleAccept') {
@@ -1359,15 +1476,23 @@ class SentinelViewProvider {
 function activate(context) {
     console.log('[Sentinel] Extension activated.');
 
-    // Kick off all background refreshes immediately (all non-blocking)
+    // ── Fire all background refreshes immediately (all non-blocking async) ──
+    refreshSessionAsync().then(() => {
+        // Transcript refresh needs session to be known first
+        refreshTranscriptAsync();
+    });
     refreshSqliteAsync();
+    refreshSkillsAsync();
+    refreshMcpAsync();
     refreshChildSessionsAsync();
+
+    // Initial LSP query — populates status bar once data arrives
     queryLsp().then(data => {
         if (data) cachedLspData = data;
         updateStatusBar();
     }).catch(() => {});
 
-    // ── LSP polling — every 8 s with concurrency guard ───────────────────────
+    // ── LSP polling — every 8 s, async, with concurrency guard ──────────────
     lspPollInterval = setInterval(async () => {
         if (lspQueryPending) return;
         lspQueryPending = true;
@@ -1382,8 +1507,21 @@ function activate(context) {
     // ── SQLite background refresh — every 8 s ────────────────────────────────
     sqliteRefreshInterval = setInterval(() => refreshSqliteAsync(), 8000);
 
-    // ── Child session scan — every 30 s ─────────────────────────────────────
+    // ── Async transcript refresh — every 3 s ─────────────────────────────────
+    // Fully async: reads + parses transcript off the main thread.
+    transcriptRefreshInterval = setInterval(() => refreshTranscriptAsync(), 3000);
+
+    // ── Async session discovery — every 15 s ─────────────────────────────────
+    sessionScanInterval = setInterval(() => refreshSessionAsync(), 15000);
+
+    // ── Async child session scan — every 30 s ────────────────────────────────
     childSessionInterval = setInterval(() => refreshChildSessionsAsync(), 30000);
+
+    // ── Async skills scan — every 60 s ───────────────────────────────────────
+    skillsRefreshInterval = setInterval(() => refreshSkillsAsync(), 60000);
+
+    // ── Async MCP config scan — every 30 s ──────────────────────────────────
+    mcpRefreshInterval = setInterval(() => refreshMcpAsync(), 30000);
 
     // ── Status bar ───────────────────────────────────────────────────────────
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100000);
@@ -1464,9 +1602,9 @@ function activate(context) {
                 return;
             }
 
-            const state      = readState();
+            const state       = readState();
             const nextEnabled = !state.enabled;
-            state.enabled    = nextEnabled;
+            state.enabled     = nextEnabled;
             writeState(state);
             updateStatusBar();
 
@@ -1488,9 +1626,9 @@ function activate(context) {
     context.subscriptions.push(
         vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration('antigravity-super-sentinel')) {
-                const config   = vscode.workspace.getConfiguration('antigravity-super-sentinel');
-                const state    = readState();
-                state.enabled  = config.get('enabled', true);
+                const config        = vscode.workspace.getConfiguration('antigravity-super-sentinel');
+                const state         = readState();
+                state.enabled       = config.get('enabled', true);
                 state.scrollEnabled = config.get('scrollEnabled', true);
                 writeState(state);
                 updateStatusBar();
@@ -1504,11 +1642,22 @@ function activate(context) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function deactivate() {
-    if (lspPollInterval)      { clearInterval(lspPollInterval);      lspPollInterval      = null; }
-    if (sqliteRefreshInterval) { clearInterval(sqliteRefreshInterval); sqliteRefreshInterval = null; }
-    if (childSessionInterval) { clearInterval(childSessionInterval); childSessionInterval = null; }
-    if (stateWatcher)         { stateWatcher.close();                stateWatcher         = null; }
-    if (statusBarItem)        { statusBarItem.dispose(); }
+    for (const interval of [
+        lspPollInterval, sqliteRefreshInterval, transcriptRefreshInterval,
+        sessionScanInterval, childSessionInterval, skillsRefreshInterval,
+        mcpRefreshInterval
+    ]) {
+        if (interval) clearInterval(interval);
+    }
+    lspPollInterval         = null;
+    sqliteRefreshInterval   = null;
+    transcriptRefreshInterval = null;
+    sessionScanInterval     = null;
+    childSessionInterval    = null;
+    skillsRefreshInterval   = null;
+    mcpRefreshInterval      = null;
+    if (stateWatcher)  { stateWatcher.close(); stateWatcher = null; }
+    if (statusBarItem) { statusBarItem.dispose(); }
 }
 
 module.exports = { activate, deactivate };
