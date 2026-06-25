@@ -376,8 +376,12 @@ async function refreshTranscriptAsync() {
                         const match = step.content.match(/Model Selection[`'"\\]*\s+from\s+(.*?)\s+to\s+(.*?)(?:\.\s|\n|<|$)/i);
                         if (match && match[2]) {
                             let toVal = match[2].trim();
+                            // Strip trailing period
                             if (toVal.endsWith('.')) toVal = toVal.slice(0, -1);
-                            transcriptActiveModel = toVal.replace(/[`]/g, '').trim();
+                            // Strip surrounding and trailing quotes/backticks
+                            // Transcript format: "Model Name" or `Model Name` — both must be cleaned
+                            toVal = toVal.replace(/^[`'"]+|[`'"]+$/g, '').trim();
+                            if (toVal) transcriptActiveModel = toVal;
                         }
                     }
                 }
