@@ -334,7 +334,16 @@ async function refreshSessionAsync() {
             } catch (e) {}
         }
 
-        if (latestSession) cachedLatestSession = latestSession;
+        if (latestSession) {
+            // When session changes, reset transcript model cache
+            // — prevents stale model from old session bleeding into new session
+            if (!cachedLatestSession || cachedLatestSession.id !== latestSession.id) {
+                cachedTranscriptActiveModel = null;
+                cachedTranscriptPath        = '';
+                cachedTranscriptMtime       = 0;
+            }
+            cachedLatestSession = latestSession;
+        }
         lastSessionScanTime = Date.now();
     } catch (e) {}
 }
@@ -371,15 +380,15 @@ async function refreshTranscriptAsync() {
                 const step = JSON.parse(line);
                 if (step.content) {
                     totalCharacters += step.content.length;
-                    // IDE injects "Model Selection from X to Y" on every model switch
-                    if (step.content.includes('Model Selection')) {
+                    // Only scan non-MODEL steps for model selection events.
+                    // AI response steps (source='MODEL') often contain phrases like
+                    // "Model Selection from X to Y" in explanations or code comments,
+                    // which causes false positive matches.
+                    if (step.source !== 'MODEL' && step.content.includes('Model Selection')) {
                         const match = step.content.match(/Model Selection[`'"\\]*\s+from\s+(.*?)\s+to\s+(.*?)(?:\.\s|\n|<|$)/i);
                         if (match && match[2]) {
                             let toVal = match[2].trim();
-                            // Strip trailing period
                             if (toVal.endsWith('.')) toVal = toVal.slice(0, -1);
-                            // Strip surrounding and trailing quotes/backticks
-                            // Transcript format: "Model Name" or `Model Name` — both must be cleaned
                             toVal = toVal.replace(/^[`'"]+|[`'"]+$/g, '').trim();
                             if (toVal) transcriptActiveModel = toVal;
                         }
