@@ -27,74 +27,54 @@ const OLD_TAG_START = '<!-- ANTIGRAVITY-CLEAN-AUTO-ACCEPT-START -->';
 const OLD_TAG_END   = '<!-- ANTIGRAVITY-CLEAN-AUTO-ACCEPT-END -->';
 
 // ─── Runtime handles ──────────────────────────────────────────────────────────
-let stateWatcher            = null;
-let sidebarProvider         = null;
-let statusBarItem           = null;
-let lspPollInterval         = null;
-let sqliteRefreshInterval   = null;
-let childSessionInterval    = null;
-let transcriptRefreshInterval = null;   // NEW: async transcript background refresh
-let sessionScanInterval     = null;     // NEW: async session discovery
-let skillsRefreshInterval   = null;     // NEW: async skills background refresh
-let mcpRefreshInterval      = null;     // NEW: async MCP config background refresh
+let stateWatcher              = null;
+let sidebarProvider           = null;
+let statusBarItem             = null;
+let lspPollInterval           = null;
+let transcriptRefreshInterval = null;   // async transcript background parse
+let sessionScanInterval       = null;   // async session discovery
+let skillsRefreshInterval     = null;   // async skills background scan
+let mcpRefreshInterval        = null;   // async MCP config background scan
 
 // ─── LSP data cache ───────────────────────────────────────────────────────────
 let cachedLspData   = { email: 'offline', plan: 'Free', modelsList: [] };
-let lspQueryPending = false;    // concurrency guard — prevents overlapping queryLsp() calls
+let lspQueryPending = false;    // prevents overlapping queryLsp() calls
 
 // ─── Session / transcript cache (populated by background async intervals) ─────
+// Single source of truth: only refreshTranscriptAsync() writes these.
+// Never seeded from SQLite, account cache, or any other source.
 let cachedLatestSession        = null;
 let lastSessionScanTime        = 0;
-let cachedTranscriptSteps       = [];
-let cachedTranscriptActiveModel = null;   // last model name seen in transcript
-let cachedTranscriptTotalChars  = 0;
+let cachedTranscriptActiveModel = null;   // last "Model Selection → Y" from transcript
+let cachedTranscriptTotalChars  = 0;      // total char count for token estimation
 let cachedTranscriptPath        = '';
 let cachedTranscriptMtime       = 0;
 
-// Sticky "last known good" active model — frozen when both P1 and P2 fail,
-// so indicator stays at last confident value instead of jumping to wrong model.
-let lastResolvedActiveModel                  = null;
-let lastResolvedActiveModelExpiration        = null;
-let lastResolvedActiveModelRemainingFraction = 0.0;
-
-// ─── SQLite cache ─────────────────────────────────────────────────────────────
-let cachedSqliteData     = null;
-let lastSqliteQueryTime  = 0;
-let sqliteRefreshPending = false;   // prevents concurrent python subprocess launches
-
 // ─── gatherSentinelData result cache ─────────────────────────────────────────
-// Prevents redundant computation when called from multiple paths on same tick.
 let _sentinelCache     = null;
 let _sentinelCacheTime = 0;
-const SENTINEL_TTL = 4000;          // 4 s — fresh enough for dashboard
+const SENTINEL_TTL = 4000;
 
 // ─── isScriptInjected result cache ───────────────────────────────────────────
-// Avoids reading large workbench.html on every status bar refresh.
-let _injectedCache     = null;      // null = not yet computed
+let _injectedCache     = null;
 let _injectedCacheTime = 0;
-const INJECTED_TTL = 10000;         // 10 s
+const INJECTED_TTL = 10000;
 
-// ─── Workbench path cache (file-system probe, stable at runtime) ───────────────
+// ─── Workbench path cache ─────────────────────────────────────────────────────
 let _wbPathCache     = undefined;
 let _wbPathCacheTime = 0;
 
 // ─── readState TTL cache ──────────────────────────────────────────────────────
-// Prevents double-read per update cycle (updateStatusBar + gatherSentinelData
-// both call readState — they now share a 1.5 s cache instead of reading twice).
 let _stateCache     = null;
 let _stateCacheTime = 0;
-const STATE_TTL = 1500;             // 1.5 s
+const STATE_TTL = 1500;
 
 // ─── Account cache write guard ────────────────────────────────────────────────
-// Writes account cache to disk at most every 30 s AND only when data changes.
-// Eliminates the "write every 4 s" self-triggering watcher loop.
 let _lastAccountWriteTime = 0;
 let _lastAccountHash      = '';
-const ACCOUNT_WRITE_INTERVAL = 30000;  // 30 s minimum between disk writes
+const ACCOUNT_WRITE_INTERVAL = 30000;
 
 // ─── State file own-write guard ───────────────────────────────────────────────
-// Track the timestamp of our own writeState() calls so the file watcher can
-// ignore the event it generated (prevents self-triggered updateStatusBar loops).
 let _ownStateWriteTime = 0;
 
 // ─── Skills / MCP caches (populated by background async intervals) ─────────────
@@ -104,11 +84,8 @@ let _cachedSkillsTime = 0;
 let _cachedMcpServers = null;
 let _cachedMcpTime    = 0;
 
-// ─── Child sessions cache (populated by background 30 s interval) ──────────────
-let cachedChildSessions = [];
-
-// ─── One-time WSL path cache (computed on first access, then pinned forever) ──
-let _wslLocalAppData = undefined;   // undefined = never probed; null = not in WSL
+// ─── One-time WSL path cache ──────────────────────────────────────────────────
+let _wslLocalAppData = undefined;
 let _wslAppData      = undefined;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,7 +98,7 @@ function mapLspData(json) {
         const email = userStatus.email || 'offline';
         const plan  = userStatus.userTier?.name || 'Free';
 
-        const configs = userStatus.cascadeModelConfigData?.clientModelConfigs || [];
+        const configs    = userStatus.cascadeModelConfigData?.clientModelConfigs || [];
         const modelsList = configs.map(c => {
             const expTime = c.quotaInfo?.resetTime
                 ? Math.floor(Date.parse(c.quotaInfo.resetTime) / 1000)
@@ -143,7 +120,7 @@ function mapLspData(json) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HTTP HELPERS (fully async — no changes)
+// HTTP HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
 function postToLsp(port, csrf) {
@@ -169,11 +146,11 @@ function tryHttpsPost(port, csrf, cb) {
         path: '/exa.language_server_pb.LanguageServerService/GetUserStatus',
         method: 'POST',
         headers: {
-            'Content-Type': 'application/json',
-            'x-codeium-csrf-token': csrf,
-            'Authorization': `Basic ${csrf}`,
-            'Content-Length': Buffer.byteLength(payload),
-            'Connection': 'close'
+            'Content-Type':           'application/json',
+            'x-codeium-csrf-token':   csrf,
+            'Authorization':          `Basic ${csrf}`,
+            'Content-Length':         Buffer.byteLength(payload),
+            'Connection':             'close'
         },
         rejectUnauthorized: false
     };
@@ -182,9 +159,8 @@ function tryHttpsPost(port, csrf, cb) {
         let body = '';
         res.on('data', (chunk) => { body += chunk; });
         res.on('end', () => {
-            try {
-                safeCb(res.statusCode === 200 ? mapLspData(JSON.parse(body)) : null);
-            } catch (e) { safeCb(null); }
+            try { safeCb(res.statusCode === 200 ? mapLspData(JSON.parse(body)) : null); }
+            catch (e) { safeCb(null); }
         });
     });
 
@@ -208,11 +184,11 @@ function tryHttpPost(port, csrf, cb) {
         path: '/exa.language_server_pb.LanguageServerService/GetUserStatus',
         method: 'POST',
         headers: {
-            'Content-Type': 'application/json',
+            'Content-Type':         'application/json',
             'x-codeium-csrf-token': csrf,
-            'Authorization': `Basic ${csrf}`,
-            'Content-Length': Buffer.byteLength(payload),
-            'Connection': 'close'
+            'Authorization':        `Basic ${csrf}`,
+            'Content-Length':       Buffer.byteLength(payload),
+            'Connection':           'close'
         }
     };
 
@@ -220,9 +196,8 @@ function tryHttpPost(port, csrf, cb) {
         let body = '';
         res.on('data', (chunk) => { body += chunk; });
         res.on('end', () => {
-            try {
-                safeCb(res.statusCode === 200 ? mapLspData(JSON.parse(body)) : null);
-            } catch (e) { safeCb(null); }
+            try { safeCb(res.statusCode === 200 ? mapLspData(JSON.parse(body)) : null); }
+            catch (e) { safeCb(null); }
         });
     });
 
@@ -233,7 +208,7 @@ function tryHttpPost(port, csrf, cb) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LSP QUERY — fully async, no main-thread blocking
+// LSP QUERY — fully async
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function queryLsp() {
@@ -244,18 +219,14 @@ async function queryLsp() {
                 cmdOut = await execAsync(
                     `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter 'Name like ''%language_server%''' | Select-Object ProcessId, CommandLine | ConvertTo-Json"`
                 );
-            } catch (e) {
-                return null;
-            }
+            } catch (e) { return null; }
             if (!cmdOut.trim()) return null;
 
             let processes = [];
             try {
                 processes = JSON.parse(cmdOut);
                 if (!Array.isArray(processes)) processes = [processes];
-            } catch (e) {
-                return null;
-            }
+            } catch (e) { return null; }
 
             for (const proc of processes) {
                 if (!proc || !proc.CommandLine || !proc.ProcessId) continue;
@@ -267,9 +238,7 @@ async function queryLsp() {
                 const csrf = tokenMatch[1].replace(/['"]+/g, '').trim();
 
                 let netstatOut = '';
-                try {
-                    netstatOut = await execAsync(`netstat -ano | findstr LISTENING | findstr ${pid}`);
-                } catch (e) {}
+                try { netstatOut = await execAsync(`netstat -ano | findstr LISTENING | findstr ${pid}`); } catch (e) {}
 
                 const ports = [];
                 if (netstatOut.trim()) {
@@ -284,12 +253,9 @@ async function queryLsp() {
                 }
 
                 const cmdPortMatch = cmdLine.match(/--extension_server_port[\s=]+([^\s]+)/);
-                if (cmdPortMatch) {
-                    ports.push(cmdPortMatch[1].replace(/['"]+/g, '').trim());
-                }
+                if (cmdPortMatch) ports.push(cmdPortMatch[1].replace(/['"]+/g, '').trim());
 
-                const uniquePorts = [...new Set(ports)];
-                for (const port of uniquePorts) {
+                for (const port of [...new Set(ports)]) {
                     const result = await postToLsp(port, csrf);
                     if (result) return result;
                 }
@@ -298,15 +264,11 @@ async function queryLsp() {
 
         } else {
             let psOut = '';
-            try {
-                psOut = await execAsync('ps -ef | grep language_server | grep -v grep');
-            } catch (e) {
-                return null;
-            }
+            try { psOut = await execAsync('ps -ef | grep language_server | grep -v grep'); }
+            catch (e) { return null; }
             if (!psOut.trim()) return null;
 
-            const lines = psOut.trim().split(/\r?\n/);
-            for (const line of lines) {
+            for (const line of psOut.trim().split(/\r?\n/)) {
                 const parts = line.trim().split(/\s+/);
                 const pid = parts[1];
                 if (!pid || isNaN(Number(pid))) continue;
@@ -319,9 +281,8 @@ async function queryLsp() {
                 try {
                     lsofOut = await execAsync(`lsof -nP -iTCP -sTCP:LISTEN -a -p ${pid}`);
                 } catch (e) {
-                    try {
-                        lsofOut = await execAsync(`ss -lntp | grep "pid=${pid}," || true`);
-                    } catch (e2) {}
+                    try { lsofOut = await execAsync(`ss -lntp | grep "pid=${pid}," || true`); }
+                    catch (e2) {}
                 }
 
                 if (!lsofOut.trim()) continue;
@@ -332,54 +293,18 @@ async function queryLsp() {
                     if (portMatch) ports.push(portMatch[1]);
                 });
 
-                const uniquePorts = [...new Set(ports)];
-                for (const port of uniquePorts) {
+                for (const port of [...new Set(ports)]) {
                     const result = await postToLsp(port, csrf);
                     if (result) return result;
                 }
             }
         }
-    } catch (e) {
-        // Ignore
-    }
+    } catch (e) {}
     return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SQLITE MODEL INFO — async background refresh, instant cache reads
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function refreshSqliteAsync() {
-    if (sqliteRefreshPending) return;
-    sqliteRefreshPending = true;
-    try {
-        const pythonScript = path.join(__dirname, 'query_model_info.py');
-        const pythonCmd    = process.platform === 'win32' ? 'python' : 'python3';
-        const out = await execAsync(`${pythonCmd} "${pythonScript}"`);
-        if (out && out.trim()) {
-            cachedSqliteData    = JSON.parse(out);
-            lastSqliteQueryTime = Date.now();
-        }
-    } catch (e) {
-        lastSqliteQueryTime = Date.now();   // back-off prevents tight retry loop
-    } finally {
-        sqliteRefreshPending = false;
-    }
-}
-
-// Returns cached data instantly. Background refresh is driven by sqliteRefreshInterval.
-function getSqliteModelInfo() {
-    return cachedSqliteData;
-}
-
-function getActiveModelIdFromSqlite() {
-    const modelInfo = getSqliteModelInfo();
-    return modelInfo ? modelInfo.activeModelId : null;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ASYNC SESSION SCAN — runs in background every 15 s
-// Fully async (fs.promises). NEVER called from gatherSentinelData() hot path.
+// ASYNC SESSION SCAN — every 15 s, fully async (fs.promises)
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function refreshSessionAsync() {
@@ -388,9 +313,8 @@ async function refreshSessionAsync() {
         const brainDir = path.join(homedir, '.gemini', 'antigravity-ide', 'brain');
 
         let entries;
-        try {
-            entries = await fs.promises.readdir(brainDir);
-        } catch (e) { return; }   // brainDir doesn't exist yet
+        try { entries = await fs.promises.readdir(brainDir); }
+        catch (e) { return; }
 
         let latestTime    = 0;
         let latestSession = null;
@@ -407,7 +331,7 @@ async function refreshSessionAsync() {
                         transcriptPath: tPath
                     };
                 }
-            } catch (e) {}  // file doesn't exist for this session — skip
+            } catch (e) {}
         }
 
         if (latestSession) cachedLatestSession = latestSession;
@@ -416,9 +340,12 @@ async function refreshSessionAsync() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ASYNC TRANSCRIPT PARSE — runs in background every 3 s
-// Fully async (fs.promises). Populates transcript caches.
-// NEVER blocks the main thread. gatherSentinelData() reads from these caches.
+// ASYNC TRANSCRIPT PARSE — every 3 s, fully async (fs.promises)
+//
+// SINGLE SOURCE OF TRUTH for active model detection.
+// Scans "Model Selection from X to Y" events injected by the IDE.
+// Only writes cachedTranscriptActiveModel — no fallbacks, no SQLite,
+// no sticky from previous sessions. Starts null, updates when transcript fires.
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function refreshTranscriptAsync() {
@@ -426,48 +353,25 @@ async function refreshTranscriptAsync() {
         if (!cachedLatestSession) return;
         const tPath = cachedLatestSession.transcriptPath;
 
-        // Async stat — check if file changed since last parse
         let stat;
-        try {
-            stat = await fs.promises.stat(tPath);
-        } catch (e) { return; }
+        try { stat = await fs.promises.stat(tPath); }
+        catch (e) { return; }
 
-        // Nothing changed — skip expensive parse
+        // File unchanged — nothing to do
         if (tPath === cachedTranscriptPath && stat.mtimeMs === cachedTranscriptMtime) return;
 
-        // Async read — no main-thread blocking even for large transcripts
         const content = await fs.promises.readFile(tPath, 'utf8');
         const lines   = content.trim().split('\n').filter(l => l.trim().length > 0);
 
         let totalCharacters       = 0;
         let transcriptActiveModel = null;
-        const steps               = [];
 
         for (const line of lines) {
             try {
                 const step = JSON.parse(line);
-                steps.push({
-                    step_index:     step.step_index,
-                    source:         step.source,
-                    type:           step.type,
-                    status:         step.status,
-                    created_at:     step.created_at,
-                    content_length: step.content ? step.content.length : 0,
-                    tool_calls:     step.tool_calls ? step.tool_calls.map(tc => {
-                        let toolArgs = {};
-                        try { toolArgs = typeof tc.args === 'string' ? JSON.parse(tc.args) : tc.args; } catch (e) {}
-                        return {
-                            name:    tc.name,
-                            summary: toolArgs.toolSummary || toolArgs.toolAction || tc.name || ''
-                        };
-                    }) : []
-                });
-
                 if (step.content) {
                     totalCharacters += step.content.length;
-                    // Priority 1: transcript-based model detection.
-                    // System injects USER_SETTINGS_CHANGE on every model switch
-                    // with exact human-readable display name — no ID mapping needed.
+                    // IDE injects "Model Selection from X to Y" on every model switch
                     if (step.content.includes('Model Selection')) {
                         const match = step.content.match(/Model Selection[`'"\\]*\s+from\s+(.*?)\s+to\s+(.*?)(?:\.\s|\n|<|$)/i);
                         if (match && match[2]) {
@@ -480,14 +384,13 @@ async function refreshTranscriptAsync() {
             } catch (e) {}
         }
 
-        // Commit to shared caches — gatherSentinelData() reads these
-        cachedTranscriptSteps       = steps;
+        // Commit to caches
         cachedTranscriptActiveModel = transcriptActiveModel;
         cachedTranscriptTotalChars  = totalCharacters;
         cachedTranscriptPath        = tPath;
         cachedTranscriptMtime       = stat.mtimeMs;
 
-        // Invalidate sentinel cache so dashboard picks up new transcript data
+        // Invalidate sentinel cache so dashboard picks up new data
         _sentinelCache     = null;
         _sentinelCacheTime = 0;
 
@@ -495,7 +398,7 @@ async function refreshTranscriptAsync() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ASYNC SKILLS SCAN — runs in background every 60 s
+// ASYNC SKILLS SCAN — every 60 s
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function refreshSkillsAsync() {
@@ -504,13 +407,8 @@ async function refreshSkillsAsync() {
         const skillsDir = path.join(homedir, '.gemini', 'config', 'skills');
 
         let folders;
-        try {
-            folders = await fs.promises.readdir(skillsDir);
-        } catch (e) {
-            _cachedSkills     = [];
-            _cachedSkillsTime = Date.now();
-            return;
-        }
+        try { folders = await fs.promises.readdir(skillsDir); }
+        catch (e) { _cachedSkills = []; _cachedSkillsTime = Date.now(); return; }
 
         const skills = [];
         for (const folder of folders) {
@@ -533,7 +431,7 @@ async function refreshSkillsAsync() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ASYNC MCP CONFIG SCAN — runs in background every 30 s
+// ASYNC MCP CONFIG SCAN — every 30 s
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function refreshMcpAsync() {
@@ -563,51 +461,6 @@ async function refreshMcpAsync() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ASYNC CHILD SESSION REFRESH — runs on dedicated 30 s interval
-// Fixed to use fs.promises instead of blocking fs.readdirSync.
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function refreshChildSessionsAsync() {
-    try {
-        const homedir          = os.homedir();
-        const conversationsDir = path.join(homedir, '.gemini', 'antigravity-ide', 'conversations');
-        const agentapiBinName  = process.platform === 'win32' ? 'agentapi.bat' : 'agentapi';
-        const agentapiPath     = path.join(homedir, '.gemini', 'antigravity-ide', 'bin', agentapiBinName);
-
-        // Check existence without blocking (these are quick existsSync on local paths)
-        if (!fs.existsSync(conversationsDir) || !fs.existsSync(agentapiPath)) return;
-        if (!cachedLatestSession) return;
-
-        const sessionId = cachedLatestSession.id;
-
-        // Use fs.promises for async directory read
-        let files;
-        try {
-            files = await fs.promises.readdir(conversationsDir);
-        } catch (e) { return; }
-
-        const dbFiles = files.filter(f => f.endsWith('.db') && !f.includes(sessionId));
-
-        const results = [];
-        for (const dbFile of dbFiles) {
-            const subSessionId = dbFile.substring(0, dbFile.length - 3);
-            try {
-                const metadataRaw = await execAsync(`"${agentapiPath}" get-conversation-metadata ${subSessionId}`);
-                const metaData    = JSON.parse(metadataRaw);
-                const parentId    = metaData?.response?.conversationMetadata?.metadata?.parentConversationId;
-                if (parentId === sessionId) {
-                    results.push({
-                        id:           subSessionId,
-                        nestingDepth: metaData?.response?.conversationMetadata?.metadata?.nestingDepth || 1
-                    });
-                }
-            } catch (e) {}
-        }
-        cachedChildSessions = results;
-    } catch (e) {}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // FILE HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -622,8 +475,7 @@ function writeFile(filePath, content) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WSL PATH HELPERS — computed once at first access, then pinned forever.
-// execSync is acceptable: one-time cost at startup, never repeated.
+// WSL PATH HELPERS — computed once at startup, then pinned
 // ─────────────────────────────────────────────────────────────────────────────
 
 function getWslWindowsLocalAppData() {
@@ -723,7 +575,7 @@ function _computeWslAppData() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WORKBENCH PATH — TTL cached (60 s when found, 5 s when not found)
+// WORKBENCH PATH — TTL cached
 // ─────────────────────────────────────────────────────────────────────────────
 
 function getWorkbenchPath() {
@@ -791,7 +643,7 @@ function getProductJsonPath() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CHECKSUM UPDATE (one-time on inject/remove — not periodic)
+// CHECKSUM UPDATE (one-time on inject/remove)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function updateChecksums() {
@@ -819,7 +671,6 @@ function updateChecksums() {
             if (!fs.existsSync(filePath)) {
                 filePath = path.join(appRoot, relativePath);
             }
-
             if (fs.existsSync(filePath)) {
                 const content = fs.readFileSync(filePath);
                 const hash    = crypto.createHash('sha256').update(content).digest('base64').replace(/=+$/, '');
@@ -852,11 +703,9 @@ function clearCodeCache() {
         if (wslAppData) {
             candidates.push(path.join(wslAppData, 'Antigravity IDE', 'Code Cache', 'js'));
         }
-
         if (process.platform === 'win32' && process.env.APPDATA) {
             candidates.push(path.join(process.env.APPDATA, 'Antigravity IDE', 'Code Cache', 'js'));
         }
-
         candidates.push(path.join(os.homedir(), '.config', 'Antigravity IDE', 'Code Cache', 'js'));
 
         for (const cacheDir of candidates) {
@@ -898,9 +747,6 @@ function getStateFilePath() {
     return path.join(path.dirname(wbPath), 'ag-super-sentinel-state.json');
 }
 
-// readState() with TTL cache (1.5 s).
-// Prevents double-read per update cycle — updateStatusBar + gatherSentinelData
-// both call this, they now share the same cached object.
 function readState() {
     const now = Date.now();
     if (_stateCache && (now - _stateCacheTime < STATE_TTL)) return _stateCache;
@@ -926,12 +772,7 @@ function readState() {
         clickIntervalMs: 1000,
         scrollIntervalMs: 500,
         allowMode: 'all',
-        selectivePermissions: {
-            browser: true,
-            command: true,
-            files: true,
-            planning: true
-        },
+        selectivePermissions: { browser: true, command: true, files: true, planning: true },
         clickPatterns: [
             'Allow', 'Always Allow', 'Allow Once', 'Allow This Con', 'Allow in Workspace',
             'Always Allow in Workspace', 'Always Proceed', 'Proceed to execution',
@@ -949,15 +790,12 @@ function readState() {
     return defaultState;
 }
 
-// writeState() records its timestamp so the file watcher can ignore the
-// event it self-generates (prevents spurious updateStatusBar calls).
 function writeState(state) {
     const statePath = getStateFilePath();
     if (!statePath) return;
     try {
         _ownStateWriteTime = Date.now();
         writeFile(statePath, JSON.stringify(state, null, 4));
-        // Update in-memory cache immediately to reflect what we just wrote
         _stateCache     = state;
         _stateCacheTime = Date.now();
     } catch (e) {
@@ -972,11 +810,8 @@ function writeState(state) {
 function injectScript(context, silent = false) {
     const wbPath = getWorkbenchPath();
     if (!wbPath) {
-        if (!silent) {
-            vscode.window.showErrorMessage('[Sentinel] workbench.html not found!');
-        } else {
-            console.warn('[Sentinel] Auto-inject failed: workbench.html not found.');
-        }
+        if (!silent) vscode.window.showErrorMessage('[Sentinel] workbench.html not found!');
+        else console.warn('[Sentinel] Auto-inject failed: workbench.html not found.');
         return false;
     }
 
@@ -988,7 +823,6 @@ function injectScript(context, silent = false) {
 
         const oldRegex = new RegExp(`${escapeRegex(OLD_TAG_START)}[\\s\\S]*?${escapeRegex(OLD_TAG_END)}`, 'g');
         html = html.replace(oldRegex, '');
-
         const newRegex = new RegExp(`${escapeRegex(TAG_START)}[\\s\\S]*?${escapeRegex(TAG_END)}`, 'g');
         html = html.replace(newRegex, '');
 
@@ -1009,24 +843,17 @@ function injectScript(context, silent = false) {
         writeFile(wbPath, html);
 
         const statePath = getStateFilePath();
-        if (statePath && !fs.existsSync(statePath)) {
-            writeState(readState());
-        }
+        if (statePath && !fs.existsSync(statePath)) writeState(readState());
 
-        // Invalidate injection status cache immediately
         _injectedCache     = true;
         _injectedCacheTime = Date.now();
-        // Pin workbench path (now confirmed valid)
         _wbPathCache       = wbPath;
         _wbPathCacheTime   = Date.now();
 
         return true;
     } catch (e) {
-        if (!silent) {
-            vscode.window.showErrorMessage(`[Sentinel] Injection failed: ${e.message}`);
-        } else {
-            console.warn(`[Sentinel] Auto-inject failed: ${e.message}`);
-        }
+        if (!silent) vscode.window.showErrorMessage(`[Sentinel] Injection failed: ${e.message}`);
+        else console.warn(`[Sentinel] Auto-inject failed: ${e.message}`);
         return false;
     }
 }
@@ -1041,7 +868,6 @@ function removeScript() {
 
     try {
         let html = fs.readFileSync(wbPath, 'utf8');
-
         const newRegex = new RegExp(`${escapeRegex(TAG_START)}[\\s\\S]*?${escapeRegex(TAG_END)}`, 'g');
         html = html.replace(newRegex, '');
         writeFile(wbPath, html);
@@ -1049,7 +875,6 @@ function removeScript() {
         if (fs.existsSync(destScriptPath)) fs.unlinkSync(destScriptPath);
         if (fs.existsSync(statePath))      fs.unlinkSync(statePath);
 
-        // Invalidate injection status cache immediately
         _injectedCache     = false;
         _injectedCacheTime = Date.now();
 
@@ -1066,7 +891,7 @@ function escapeRegex(str) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SCRIPT INJECTION STATUS — TTL cached, avoids reading workbench.html repeatedly
+// SCRIPT INJECTION STATUS — TTL cached
 // ─────────────────────────────────────────────────────────────────────────────
 
 function isScriptInjected(forceRefresh = false) {
@@ -1076,11 +901,7 @@ function isScriptInjected(forceRefresh = false) {
     }
     try {
         const wbPath = getWorkbenchPath();
-        if (!wbPath) {
-            _injectedCache     = false;
-            _injectedCacheTime = now;
-            return false;
-        }
+        if (!wbPath) { _injectedCache = false; _injectedCacheTime = now; return false; }
         const html = fs.readFileSync(wbPath, 'utf8');
         _injectedCache     = html.includes(TAG_START) && html.includes(TAG_END);
         _injectedCacheTime = now;
@@ -1091,7 +912,7 @@ function isScriptInjected(forceRefresh = false) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// STATUS BAR — all dependencies are TTL-cached, call cost is negligible
+// STATUS BAR
 // ─────────────────────────────────────────────────────────────────────────────
 
 function formatCountdown(expirationSec) {
@@ -1107,23 +928,23 @@ function formatCountdown(expirationSec) {
 function updateStatusBar() {
     if (!statusBarItem) return;
 
-    const wbPath    = getWorkbenchPath();
-    const state     = readState();         // 1.5 s TTL cache — usually cache hit
-    const injected  = wbPath ? isScriptInjected() : false;
-    const data      = gatherSentinelData();    // 4 s TTL cache + zero file I/O
+    const wbPath   = getWorkbenchPath();
+    const state    = readState();
+    const injected = wbPath ? isScriptInjected() : false;
+    const data     = gatherSentinelData();
 
-    const activeModel = data.activeModel || 'Gemini 3.5 Flash (High)';
+    const activeModel = data.activeModel || 'Detecting...';
     const quotaPct    = Math.round((data.activeModelRemainingFraction || 0.0) * 100);
     const countdown   = formatCountdown(data.activeModelExpiration);
 
     if (!wbPath) {
         statusBarItem.text            = `$(circle-slash) Kadzura Super Sentinel : NO UI ACCESS | ${activeModel} ${quotaPct}% (${countdown})`;
-        statusBarItem.tooltip         = `Antigravity Super Sentinel clicker cannot locate workbench.html.\nActive Model: ${activeModel}\nQuota Remaining: ${quotaPct}%\nReset in: ${countdown}\nTelemetry is active, but auto-clicker is disabled.`;
+        statusBarItem.tooltip         = `Antigravity Super Sentinel: workbench.html not found.\nActive Model: ${activeModel}\nQuota: ${quotaPct}%  Reset in: ${countdown}`;
         statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
         statusBarItem.color           = '#fbbf24';
     } else if (!injected) {
         statusBarItem.text            = `$(circle-slash) Kadzura Super Sentinel : NOT INSTALLED | ${activeModel} ${quotaPct}% (${countdown})`;
-        statusBarItem.tooltip         = `Antigravity Super Sentinel clicker is not injected.\nActive Model: ${activeModel}\nQuota Remaining: ${quotaPct}%\nReset in: ${countdown}\nClick to install/enable.`;
+        statusBarItem.tooltip         = `Antigravity Super Sentinel: not injected.\nActive Model: ${activeModel}\nQuota: ${quotaPct}%  Reset in: ${countdown}`;
         statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
         statusBarItem.color           = '#ef4444';
     } else {
@@ -1131,12 +952,12 @@ function updateStatusBar() {
             statusBarItem.text            = `$(eye) Kadzura Super Sentinel : ACTIVE | ${activeModel} ${quotaPct}% (${countdown})`;
             statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.remoteBackground');
             statusBarItem.color           = '#c084fc';
-            statusBarItem.tooltip         = `Antigravity Super Sentinel clicker is Active.\nActive Model: ${activeModel}\nQuota Remaining: ${quotaPct}%\nReset in: ${countdown}\nClick to open Sentinel Dashboard.`;
+            statusBarItem.tooltip         = `Antigravity Super Sentinel: Active.\nActive Model: ${activeModel}\nQuota: ${quotaPct}%  Reset in: ${countdown}`;
         } else {
             statusBarItem.text            = `$(circle-slash) Kadzura Super Sentinel : PAUSED | ${activeModel} ${quotaPct}% (${countdown})`;
             statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
             statusBarItem.color           = '#fbbf24';
-            statusBarItem.tooltip         = `Antigravity Super Sentinel clicker is Paused.\nActive Model: ${activeModel}\nQuota Remaining: ${quotaPct}%\nReset in: ${countdown}\nClick to open Sentinel Dashboard.`;
+            statusBarItem.tooltip         = `Antigravity Super Sentinel: Paused.\nActive Model: ${activeModel}\nQuota: ${quotaPct}%  Reset in: ${countdown}`;
         }
     }
     statusBarItem.show();
@@ -1154,12 +975,10 @@ function setupStateFileWatcher() {
     try {
         stateWatcher = fs.watch(statePath, (eventType) => {
             if (eventType === 'change') {
-                // Ignore events triggered by our own writeState() calls.
-                // 300 ms window covers any OS-level write buffer flush delay.
+                // Ignore events from our own writeState() calls (300 ms window)
                 if (Date.now() - _ownStateWriteTime < 300) return;
 
-                // Genuine external write (e.g. auto-clicker script reporting a click):
-                // invalidate state cache so next readState() gets fresh data.
+                // Genuine external write (auto-clicker click event) — refresh cache
                 _stateCache     = null;
                 _stateCacheTime = 0;
 
@@ -1181,114 +1000,71 @@ function setupStateFileWatcher() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GATHER SENTINEL DATA — 100% memory-only hot path.
-// All file I/O has been moved to dedicated background async intervals.
-// This function assembles data from caches they populate — zero blocking.
+// GATHER SENTINEL DATA — 100% memory-only.
+// All file I/O is in background async intervals — nothing blocks here.
+//
+// Active model: SINGLE SOURCE OF TRUTH = transcript P1 only.
+// No SQLite, no sticky from other sessions, no fallback to wrong model.
+// Starts null ("Detecting...") until IDE injects "Model Selection" event.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function gatherSentinelData() {
-    // ── Fast path: return cached result if still fresh ──────────────────────
     const now = Date.now();
-    if (_sentinelCache && (now - _sentinelCacheTime < SENTINEL_TTL)) {
-        return _sentinelCache;
-    }
+    if (_sentinelCache && (now - _sentinelCacheTime < SENTINEL_TTL)) return _sentinelCache;
 
     const data = {
         sessionActive:                false,
         sessionId:                    '',
-        activeModel:                  'Gemini 3.5 Flash (High)',
+        activeModel:                  null,          // null = "Detecting..."
         activeModelExpiration:        null,
         activeModelRemainingFraction: 0.0,
         modelsList:                   [],
         email:                        'offline',
         plan:                         'Free',
-        stepsCount:                   0,
-        stepsLimit:                   100,
         estimatedTokens:              0,
         contextLimit:                 1000000,
         warningThreshold:             750000,
-        steps:                        [],
         skills:                       [],
-        mcpServers:                   [],
-        browserFrames:                [],
-        childSessions:                []
+        mcpServers:                   []
     };
 
     try {
-        // ── Session — read from background async cache (no file I/O here) ───
         if (!cachedLatestSession) {
-            _sentinelCache     = data;
-            _sentinelCacheTime = now;
-            return data;
+            _sentinelCache = data; _sentinelCacheTime = now; return data;
         }
 
         data.sessionActive = true;
         data.sessionId     = cachedLatestSession.id;
+        data.estimatedTokens = Math.round(cachedTranscriptTotalChars / 3.3);
 
-        // ── Transcript — read from background async cache (no file I/O) ────
-        data.steps      = cachedTranscriptSteps;
-        data.stepsCount = cachedTranscriptSteps.length;
-        const totalCharacters       = cachedTranscriptTotalChars;
+        // ── Active model — SINGLE SOURCE: transcript P1 only ────────────────
+        // cachedTranscriptActiveModel is populated by refreshTranscriptAsync()
+        // which reads "Model Selection from X to Y" events injected by the IDE.
+        // Starts as null. No fallbacks. "Detecting..." is shown until it fires.
         const transcriptActiveModel = cachedTranscriptActiveModel;
 
-        // ── Active model resolution (memory-only) ────────────────────────────
-        // P1: transcript display name (injected by IDE on model switch, exact match)
-        // P2: SQLite activeModelId → LSP ID lookup
-        // Sticky: freeze at last known good if both fail
         if (cachedLspData && cachedLspData.modelsList && cachedLspData.modelsList.length > 0) {
             data.email      = cachedLspData.email;
             data.plan       = cachedLspData.plan;
             data.modelsList = cachedLspData.modelsList;
 
-            let activeModelObj = null;
-
-            // P1: transcript name — exact display name match, no ID mapping needed
             if (transcriptActiveModel) {
-                activeModelObj = cachedLspData.modelsList.find(m => m.name === transcriptActiveModel) || null;
-            }
-
-            // P2: SQLite ID — match by internal model ID (cross-session fallback)
-            if (!activeModelObj) {
-                const sqliteActiveId = getActiveModelIdFromSqlite();
-                if (sqliteActiveId) {
-                    activeModelObj = cachedLspData.modelsList.find(m => m.id === sqliteActiveId) || null;
+                // Find in LSP list for quota and expiration info
+                const activeModelObj = cachedLspData.modelsList.find(m => m.name === transcriptActiveModel) || null;
+                if (activeModelObj) {
+                    data.activeModel                  = activeModelObj.name;
+                    data.activeModelExpiration        = activeModelObj.expiration;
+                    data.activeModelRemainingFraction = activeModelObj.remainingFraction;
+                } else {
+                    // Name from transcript but LSP hasn't refreshed yet — show name, no quota
+                    data.activeModel = transcriptActiveModel;
                 }
             }
-
-            if (activeModelObj) {
-                // Resolved — update sticky cache
-                data.activeModel                  = activeModelObj.name;
-                data.activeModelExpiration        = activeModelObj.expiration;
-                data.activeModelRemainingFraction = activeModelObj.remainingFraction;
-                lastResolvedActiveModel                  = activeModelObj.name;
-                lastResolvedActiveModelExpiration        = activeModelObj.expiration;
-                lastResolvedActiveModelRemainingFraction = activeModelObj.remainingFraction;
-            } else if (lastResolvedActiveModel) {
-                // Both sources failed — freeze indicator at last known good
-                data.activeModel                  = lastResolvedActiveModel;
-                data.activeModelExpiration        = lastResolvedActiveModelExpiration;
-                data.activeModelRemainingFraction = lastResolvedActiveModelRemainingFraction;
-            }
-            // If no lastResolved: keep safe default string already in data object
-        } else {
-            // LSP not yet available — use SQLite model name directly
-            const modelInfo = getSqliteModelInfo();
-            if (modelInfo) {
-                if (modelInfo.activeModel) {
-                    data.activeModel = modelInfo.activeModel;
-                    lastResolvedActiveModel = modelInfo.activeModel;
-                }
-                data.activeModelExpiration        = modelInfo.expiration;
-                data.activeModelRemainingFraction = modelInfo.remainingFraction;
-                data.modelsList                   = modelInfo.models || [];
-            } else if (lastResolvedActiveModel) {
-                data.activeModel                  = lastResolvedActiveModel;
-                data.activeModelExpiration        = lastResolvedActiveModelExpiration;
-                data.activeModelRemainingFraction = lastResolvedActiveModelRemainingFraction;
-            }
+            // else: transcriptActiveModel is null → data.activeModel stays null → "Detecting..."
         }
+        // else: LSP not ready → data.activeModel stays null → "Detecting..."
 
-        // ── Context limits (memory-only lookup table) ────────────────────────
+        // ── Context limits ───────────────────────────────────────────────────
         const MODEL_LIMITS = {
             'Gemini Pro 3.1 High':         { limit: 2000000, warn: 1500000 },
             'Gemini 3.1 Pro (High)':       { limit: 2000000, warn: 1500000 },
@@ -1307,50 +1083,26 @@ function gatherSentinelData() {
             'GPT OSS 12B':                 { limit:   32000, warn:   24000 },
             'GPT-OSS 120B (Medium)':       { limit:   32000, warn:   24000 }
         };
-
-        const limits          = MODEL_LIMITS[data.activeModel] || { limit: 1000000, warn: 750000 };
-        data.stepsLimit       = data.activeModel.includes('Pro') ? 150 : 100;
-        data.estimatedTokens  = Math.round(totalCharacters / 3.3);
-        data.warningThreshold = limits.warn;
+        const limits = MODEL_LIMITS[data.activeModel] || { limit: 1000000, warn: 750000 };
         data.contextLimit     = limits.limit;
+        data.warningThreshold = limits.warn;
 
-        // ── Browser recordings — small local dir, existsSync + readdirSync is fast ─
-        const homedir = os.homedir();
-        const recDir  = path.join(homedir, '.gemini', 'antigravity-ide', 'browser_recordings', data.sessionId);
-        if (fs.existsSync(recDir)) {
-            const files      = fs.readdirSync(recDir);
-            const imageFiles = files
-                .filter(f => f.endsWith('.jpg') || f.endsWith('.png') || f.endsWith('.webp'))
-                .sort((a, b) => b.localeCompare(a))
-                .slice(0, 8);
-            data.browserFrames = imageFiles.map(f => path.join(recDir, f));
-        }
+        // ── Skills / MCP — from background async caches ──────────────────────
+        data.skills     = _cachedSkills     || [];
+        data.mcpServers = _cachedMcpServers || [];
 
-        // ── Skills / MCP / child sessions — read from background async caches ─
-        data.skills        = _cachedSkills     || [];
-        data.mcpServers    = _cachedMcpServers || [];
-        data.childSessions = cachedChildSessions;
-
-        // ── Account cache ────────────────────────────────────────────────────
-        // readState() is TTL-cached (1.5 s) — usually a memory-only operation.
-        // Account persistence is rate-limited and change-gated — no write if
-        // data unchanged and less than 30 s since last write.
+        // ── Account cache — TTL-cached readState, rate-limited write ─────────
         const state = readState();
         if (!state.cachedAccounts) state.cachedAccounts = [];
 
         const activeEmail = data.email;
-        if (activeEmail && activeEmail !== 'offline') {
-            // Change detection — build a hash of what matters for account cache
-            const accountHash = `${activeEmail}|${data.plan}|${data.activeModel}|${Math.round((data.activeModelRemainingFraction || 0) * 100)}`;
+        if (activeEmail && activeEmail !== 'offline' && data.activeModel) {
+            const accountHash    = `${activeEmail}|${data.plan}|${data.activeModel}|${Math.round((data.activeModelRemainingFraction || 0) * 100)}`;
             const timeSinceWrite = now - _lastAccountWriteTime;
 
             if (accountHash !== _lastAccountHash || timeSinceWrite >= ACCOUNT_WRITE_INTERVAL) {
-                // Only touch disk if something actually changed OR 30 s interval passed
                 let accountEntry = state.cachedAccounts.find(acc => acc.email === activeEmail);
-                if (!accountEntry) {
-                    accountEntry = { email: activeEmail };
-                    state.cachedAccounts.push(accountEntry);
-                }
+                if (!accountEntry) { accountEntry = { email: activeEmail }; state.cachedAccounts.push(accountEntry); }
                 accountEntry.plan                         = data.plan || 'Free';
                 accountEntry.activeModel                  = data.activeModel;
                 accountEntry.activeModelExpiration        = data.activeModelExpiration;
@@ -1358,14 +1110,11 @@ function gatherSentinelData() {
                 accountEntry.modelsList                   = data.modelsList || [];
                 accountEntry.lastSeen                     = now;
                 accountEntry.isActive                     = true;
-
-                state.cachedAccounts.forEach(acc => {
-                    if (acc.email !== activeEmail) acc.isActive = false;
-                });
+                state.cachedAccounts.forEach(acc => { if (acc.email !== activeEmail) acc.isActive = false; });
 
                 _lastAccountHash      = accountHash;
                 _lastAccountWriteTime = now;
-                writeState(state);  // _ownStateWriteTime set inside writeState()
+                writeState(state);
             }
         }
         data.cachedAccounts = state.cachedAccounts || [];
@@ -1401,28 +1150,17 @@ class SentinelViewProvider {
         const state        = readState();
         const sentinelData = gatherSentinelData();
 
-        if (sentinelData.browserFrames.length > 0) {
-            sentinelData.browserFrames = sentinelData.browserFrames.map(f =>
-                webviewView.webview.asWebviewUri(vscode.Uri.file(f)).toString()
-            );
-        }
-
         webviewView.webview.html = buildSettingsHtml({
             ...state,
             overwatch: sentinelData,
             version:   this._context.extension?.packageJSON?.version || '1.0.0'
         });
 
-        // Dashboard poll: 5 s. gatherSentinelData() is a 4 s TTL cache hit — fast.
+        // Dashboard poll: 5 s. gatherSentinelData() is a 4 s TTL cache — fast.
         const pollInterval = setInterval(() => {
             if (webviewView.visible) {
                 try {
                     const data = gatherSentinelData();
-                    if (data.browserFrames.length > 0) {
-                        data.browserFrames = data.browserFrames.map(f =>
-                            webviewView.webview.asWebviewUri(vscode.Uri.file(f)).toString()
-                        );
-                    }
                     webviewView.webview.postMessage({ command: 'updateOverwatch', data });
                     updateStatusBar();
                 } catch (e) {
@@ -1431,22 +1169,16 @@ class SentinelViewProvider {
             }
         }, 5000);
 
-        // Handle messages from Webview (user interactions)
         webviewView.webview.onDidReceiveMessage((msg) => {
             const state = readState();
             if (msg.command === 'toggleAccept') {
-                state.enabled = msg.enabled;
-                writeState(state);
-                updateStatusBar();
+                state.enabled = msg.enabled; writeState(state); updateStatusBar();
             } else if (msg.command === 'toggleScroll') {
-                state.scrollEnabled = msg.enabled;
-                writeState(state);
+                state.scrollEnabled = msg.enabled; writeState(state);
             } else if (msg.command === 'updateAllowMode') {
-                state.allowMode = msg.mode;
-                writeState(state);
+                state.allowMode = msg.mode; writeState(state);
             } else if (msg.command === 'updateSelectivePermissions') {
-                state.selectivePermissions = msg.permissions;
-                writeState(state);
+                state.selectivePermissions = msg.permissions; writeState(state);
             } else if (msg.command === 'saveConfig') {
                 state.clickIntervalMs  = msg.data.clickIntervalMs;
                 state.scrollIntervalMs = msg.data.scrollIntervalMs;
@@ -1454,11 +1186,8 @@ class SentinelViewProvider {
                 state.clickPatterns    = msg.data.clickPatterns;
                 writeState(state);
             } else if (msg.command === 'clearLogs') {
-                state.clickLog    = [];
-                state.totalClicks = 0;
-                state.clickStats  = {};
-                writeState(state);
-                updateStatusBar();
+                state.clickLog = []; state.totalClicks = 0; state.clickStats = {};
+                writeState(state); updateStatusBar();
             }
         });
 
@@ -1476,71 +1205,46 @@ class SentinelViewProvider {
 function activate(context) {
     console.log('[Sentinel] Extension activated.');
 
-    // ── Fire all background refreshes immediately (all non-blocking async) ──
-    refreshSessionAsync().then(() => {
-        // Transcript refresh needs session to be known first
-        refreshTranscriptAsync();
-    });
-    refreshSqliteAsync();
+    // ── Fire all background refreshes immediately ───────────────────────────
+    refreshSessionAsync().then(() => refreshTranscriptAsync());
     refreshSkillsAsync();
     refreshMcpAsync();
-    refreshChildSessionsAsync();
 
-    // Initial LSP query — populates status bar once data arrives
+    // Initial LSP query
     queryLsp().then(data => {
         if (data) cachedLspData = data;
         updateStatusBar();
     }).catch(() => {});
 
-    // ── LSP polling — every 8 s, async, with concurrency guard ──────────────
+    // ── Polling intervals ─────────────────────────────────────────────────────
     lspPollInterval = setInterval(async () => {
         if (lspQueryPending) return;
         lspQueryPending = true;
-        try {
-            const data = await queryLsp();
-            if (data) cachedLspData = data;
-        } catch (e) {}
+        try { const data = await queryLsp(); if (data) cachedLspData = data; } catch (e) {}
         lspQueryPending = false;
         updateStatusBar();
     }, 8000);
 
-    // ── SQLite background refresh — every 8 s ────────────────────────────────
-    sqliteRefreshInterval = setInterval(() => refreshSqliteAsync(), 8000);
-
-    // ── Async transcript refresh — every 3 s ─────────────────────────────────
-    // Fully async: reads + parses transcript off the main thread.
     transcriptRefreshInterval = setInterval(() => refreshTranscriptAsync(), 3000);
+    sessionScanInterval       = setInterval(() => refreshSessionAsync(), 15000);
+    skillsRefreshInterval     = setInterval(() => refreshSkillsAsync(), 60000);
+    mcpRefreshInterval        = setInterval(() => refreshMcpAsync(), 30000);
 
-    // ── Async session discovery — every 15 s ─────────────────────────────────
-    sessionScanInterval = setInterval(() => refreshSessionAsync(), 15000);
-
-    // ── Async child session scan — every 30 s ────────────────────────────────
-    childSessionInterval = setInterval(() => refreshChildSessionsAsync(), 30000);
-
-    // ── Async skills scan — every 60 s ───────────────────────────────────────
-    skillsRefreshInterval = setInterval(() => refreshSkillsAsync(), 60000);
-
-    // ── Async MCP config scan — every 30 s ──────────────────────────────────
-    mcpRefreshInterval = setInterval(() => refreshMcpAsync(), 30000);
-
-    // ── Status bar ───────────────────────────────────────────────────────────
+    // ── Status bar ────────────────────────────────────────────────────────────
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100000);
     statusBarItem.command = 'antigravity-super-sentinel.openSettings';
     context.subscriptions.push(statusBarItem);
     updateStatusBar();
 
-    // ── Sidebar View Provider ────────────────────────────────────────────────
+    // ── Sidebar ───────────────────────────────────────────────────────────────
     sidebarProvider = new SentinelViewProvider(context.extensionUri, context);
     context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider(
-            'antigravity-super-sentinel-view',
-            sidebarProvider
-        )
+        vscode.window.registerWebviewViewProvider('antigravity-super-sentinel-view', sidebarProvider)
     );
 
-    // ── Auto-inject script on startup if not already injected ────────────────
+    // ── Auto-inject on startup ─────────────────────────────────────────────
     if (!isScriptInjected()) {
-        console.log('[Sentinel] Script not found in workbench.html, executing auto-inject...');
+        console.log('[Sentinel] Script not found, auto-injecting...');
         const success = injectScript(context, true);
         if (success) {
             clearCodeCache();
@@ -1550,30 +1254,22 @@ function activate(context) {
                 '[Sentinel] Clean clicker auto-injected. Please reload window to activate.',
                 'Reload Window'
             ).then(choice => {
-                if (choice === 'Reload Window') {
-                    vscode.commands.executeCommand('workbench.action.reloadWindow');
-                }
+                if (choice === 'Reload Window') vscode.commands.executeCommand('workbench.action.reloadWindow');
             });
         }
     }
 
     setupStateFileWatcher();
 
-    // ── Commands ─────────────────────────────────────────────────────────────
-
+    // ── Commands ───────────────────────────────────────────────────────────────
     context.subscriptions.push(
         vscode.commands.registerCommand('antigravity-super-sentinel.enable', async () => {
             const success = injectScript(context, false);
             if (success) {
-                clearCodeCache();
-                updateChecksums();
-                updateStatusBar();
-                setupStateFileWatcher();
+                clearCodeCache(); updateChecksums(); updateStatusBar(); setupStateFileWatcher();
                 vscode.window.showInformationMessage(
-                    '[Sentinel] Clicker script injected successfully. Reloading window...', 'Reload Now'
-                ).then(() => {
-                    vscode.commands.executeCommand('workbench.action.reloadWindow');
-                });
+                    '[Sentinel] Clicker injected. Reloading...', 'Reload Now'
+                ).then(() => vscode.commands.executeCommand('workbench.action.reloadWindow'));
             }
         })
     );
@@ -1583,14 +1279,10 @@ function activate(context) {
             const success = removeScript();
             if (success) {
                 if (stateWatcher) { stateWatcher.close(); stateWatcher = null; }
-                clearCodeCache();
-                updateChecksums();
-                updateStatusBar();
+                clearCodeCache(); updateChecksums(); updateStatusBar();
                 vscode.window.showInformationMessage(
-                    '[Sentinel] Clicker script removed successfully. Reloading window...', 'Reload Now'
-                ).then(() => {
-                    vscode.commands.executeCommand('workbench.action.reloadWindow');
-                });
+                    '[Sentinel] Clicker removed. Reloading...', 'Reload Now'
+                ).then(() => vscode.commands.executeCommand('workbench.action.reloadWindow'));
             }
         })
     );
@@ -1601,25 +1293,20 @@ function activate(context) {
                 vscode.commands.executeCommand('antigravity-super-sentinel.enable');
                 return;
             }
-
             const state       = readState();
             const nextEnabled = !state.enabled;
             state.enabled     = nextEnabled;
             writeState(state);
             updateStatusBar();
-
-            const message = nextEnabled
-                ? 'Auto-Accept clicker is now ACTIVE.'
-                : 'Auto-Accept clicker is now PAUSED.';
-            vscode.window.setStatusBarMessage(`[Sentinel] ${message}`, 3000);
+            vscode.window.setStatusBarMessage(
+                `[Sentinel] ${nextEnabled ? 'ACTIVE' : 'PAUSED'}`, 3000
+            );
         })
     );
 
     context.subscriptions.push(
         vscode.commands.registerCommand('antigravity-super-sentinel.openSettings', () => {
-            vscode.commands.executeCommand(
-                'workbench.view.extension.antigravity-super-sentinel-container'
-            );
+            vscode.commands.executeCommand('workbench.view.extension.antigravity-super-sentinel-container');
         })
     );
 
@@ -1638,24 +1325,21 @@ function activate(context) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EXTENSION DEACTIVATION — clean up all intervals and watchers
+// EXTENSION DEACTIVATION
 // ─────────────────────────────────────────────────────────────────────────────
 
 function deactivate() {
     for (const interval of [
-        lspPollInterval, sqliteRefreshInterval, transcriptRefreshInterval,
-        sessionScanInterval, childSessionInterval, skillsRefreshInterval,
-        mcpRefreshInterval
+        lspPollInterval, transcriptRefreshInterval, sessionScanInterval,
+        skillsRefreshInterval, mcpRefreshInterval
     ]) {
         if (interval) clearInterval(interval);
     }
-    lspPollInterval         = null;
-    sqliteRefreshInterval   = null;
+    lspPollInterval           = null;
     transcriptRefreshInterval = null;
-    sessionScanInterval     = null;
-    childSessionInterval    = null;
-    skillsRefreshInterval   = null;
-    mcpRefreshInterval      = null;
+    sessionScanInterval       = null;
+    skillsRefreshInterval     = null;
+    mcpRefreshInterval        = null;
     if (stateWatcher)  { stateWatcher.close(); stateWatcher = null; }
     if (statusBarItem) { statusBarItem.dispose(); }
 }

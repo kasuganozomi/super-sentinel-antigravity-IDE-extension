@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 	<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
 		<Metadata>
-			<Identity Language="en-US" Id="antigravity-super-sentinel" Version="2.3.0" Publisher="IKadzura" />
+			<Identity Language="en-US" Id="antigravity-super-sentinel" Version="2.4.0" Publisher="IKadzura" />
 			<DisplayName>Antigravity Super Sentinel</DisplayName>
 			<Description xml:space="preserve">Agents Utility Dashboard for Google Antigravity IDE</Description>
 			<Tags>antigravity,gemini,agent,auto-accept,auto-approve,quota,dashboard,sentinel,clicker,telemetry</Tags>
