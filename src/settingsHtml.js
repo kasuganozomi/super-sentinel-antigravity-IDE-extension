@@ -802,15 +802,15 @@ module.exports = function buildSettingsHtml(data) {
 
         <!-- Tabs: Radar | Skills/MCP | Clicker -->
         <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('radar', this)">
+            <button class="tab-btn active" data-tab="radar">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path><path d="M2 12h20"></path></svg>
                 Radar
             </button>
-            <button class="tab-btn" onclick="switchTab('skills', this)">
+            <button class="tab-btn" data-tab="skills">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
                 Skills/MCP
             </button>
-            <button class="tab-btn" onclick="switchTab('clicker', this)">
+            <button class="tab-btn" data-tab="clicker">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
                 Clicker
             </button>
@@ -1072,12 +1072,19 @@ module.exports = function buildSettingsHtml(data) {
             }
         }
 
-        function switchTab(tabId, btn) {
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        // ── Tab navigation — event delegation, no inline onclick ───────────────────
+        // Using addEventListener + closest() handles clicks on SVG children inside buttons
+        // and avoids any potential CSP restriction on inline onclick attributes.
+        document.querySelector('.tabs').addEventListener('click', function(e) {
+            const btn = e.target.closest('[data-tab]');
+            if (!btn) return;
+            const tabId = btn.dataset.tab;
+            document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+            document.querySelectorAll('.tab-content').forEach(function(c) { c.classList.remove('active'); });
             btn.classList.add('active');
-            document.getElementById('tab-' + tabId).classList.add('active');
-        }
+            var tabEl = document.getElementById('tab-' + tabId);
+            if (tabEl) tabEl.classList.add('active');
+        });
 
         function updateRangeLabel(id, text) {
             document.getElementById('label-' + id).innerText = text;
