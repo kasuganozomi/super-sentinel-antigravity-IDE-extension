@@ -121,6 +121,7 @@ module.exports = function buildSettingsHtml(data) {
     const totalClicks     = data.totalClicks || 0;
     const clickLog        = data.clickLog || [];
     const version         = data.version || '1.0.0';
+    const nonce           = data.nonce || '';
 
     const allowMode = data.allowMode || 'all';
     const selective = data.selectivePermissions || { browser: true, command: true, files: true, planning: true };
@@ -166,6 +167,7 @@ module.exports = function buildSettingsHtml(data) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}' 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: 'self'; font-src 'self' data:;">
     <title>Antigravity Super Sentinel</title>
     <style>
         :root {
@@ -1057,7 +1059,7 @@ module.exports = function buildSettingsHtml(data) {
 
     <div class="toast" id="toast-notify">Settings Saved!</div>
 
-    <script>
+    <script nonce="${nonce}">
         const vscode = acquireVsCodeApi();
         let activePatterns = ${JSON.stringify(clickPatterns)};
         let currentAllowMode = '${allowMode}';

@@ -8,6 +8,11 @@ const https = require('https');
 const { execSync, exec } = require('child_process');
 const buildSettingsHtml = require('./settingsHtml');
 
+// ─── Nonce generator for webview CSP ────────────────────────────────────────
+function getNonce() {
+    return crypto.randomBytes(16).toString('hex');
+}
+
 // ─── Non-blocking async shell execution ──────────────────────────────────────
 // All periodic/polling shell commands MUST use this instead of execSync.
 // execSync is only kept for WSL one-time path detection (runs once at startup).
@@ -1175,11 +1180,13 @@ class SentinelViewProvider {
 
         const state        = readState();
         const sentinelData = gatherSentinelData();
+        const nonce        = getNonce();
 
         webviewView.webview.html = buildSettingsHtml({
             ...state,
             overwatch: sentinelData,
-            version:   this._context.extension?.packageJSON?.version || '1.0.0'
+            version:   this._context.extension?.packageJSON?.version || '1.0.0',
+            nonce
         });
 
         // Dashboard poll: 5 s. gatherSentinelData() is a 4 s TTL cache — fast.
