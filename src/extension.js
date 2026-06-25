@@ -41,10 +41,17 @@ let lspQueryPending = false;    // concurrency guard — prevents overlapping qu
 // ─── Session / transcript cache ───────────────────────────────────────────────
 let cachedLatestSession        = null;
 let lastSessionScanTime        = 0;
-let cachedTranscriptSteps      = [];
-let cachedTranscriptTotalChars = 0;
-let cachedTranscriptPath       = '';
-let cachedTranscriptMtime      = 0;
+let cachedTranscriptSteps       = [];
+let cachedTranscriptActiveModel = null;   // last model name seen in transcript
+let cachedTranscriptTotalChars  = 0;
+let cachedTranscriptPath        = '';
+let cachedTranscriptMtime       = 0;
+
+// Sticky "last known good" active model — used when both transcript and SQLite fail,
+// so the indicator stays frozen at the last confident value instead of jumping.
+let lastResolvedActiveModel                  = null;
+let lastResolvedActiveModelExpiration        = null;
+let lastResolvedActiveModelRemainingFraction = 0.0;
 
 // ─── SQLite cache ─────────────────────────────────────────────────────────────
 let cachedSqliteData     = null;
@@ -1017,7 +1024,8 @@ function gatherSentinelData() {
         if (tPath !== cachedTranscriptPath || stat.mtimeMs !== cachedTranscriptMtime) {
             const content = fs.readFileSync(tPath, 'utf8');
             const lines   = content.trim().split('\n').filter(l => l.trim().length > 0);
-            let totalCharacters = 0;
+            let totalCharacters     = 0;
+            let transcriptActiveModel = null;
             const steps = [];
 
             for (const line of lines) {
@@ -1042,53 +1050,91 @@ function gatherSentinelData() {
 
                     if (step.content) {
                         totalCharacters += step.content.length;
-                        // Note: transcript-based model name detection removed.
-                        // SQLite is the single source of truth for active model.
+                        // Priority 1: transcript-based model detection.
+                        // The system injects a USER_SETTINGS_CHANGE message every time
+                        // the user switches models, containing the exact display name.
+                        if (step.content.includes('Model Selection')) {
+                            const match = step.content.match(/Model Selection[`'"\\]*\s+from\s+(.*?)\s+to\s+(.*?)(?:\.\s|\n|<|$)/i);
+                            if (match && match[2]) {
+                                let toVal = match[2].trim();
+                                if (toVal.endsWith('.')) toVal = toVal.slice(0, -1);
+                                transcriptActiveModel = toVal.replace(/[`]/g, '').trim();
+                            }
+                        }
                     }
                 } catch (e) {}
             }
 
-            cachedTranscriptSteps      = steps;
-            cachedTranscriptTotalChars = totalCharacters;
-            cachedTranscriptPath       = tPath;
-            cachedTranscriptMtime      = stat.mtimeMs;
+            cachedTranscriptSteps       = steps;
+            cachedTranscriptActiveModel  = transcriptActiveModel;
+            cachedTranscriptTotalChars   = totalCharacters;
+            cachedTranscriptPath         = tPath;
+            cachedTranscriptMtime        = stat.mtimeMs;
         }
 
         data.steps      = cachedTranscriptSteps;
         data.stepsCount = cachedTranscriptSteps.length;
-        const totalCharacters = cachedTranscriptTotalChars;
+        const totalCharacters       = cachedTranscriptTotalChars;
+        const transcriptActiveModel = cachedTranscriptActiveModel;
 
-        // ── Active model resolution: SQLite is the single source of truth ────
-        // SQLite holds the activeModelId that the IDE itself writes when the
-        // user switches models — it's the most reliable ground truth available.
-        // We match that ID against the LSP model list to get name + quota data.
-        // No transcript guessing, no arbitrary modelsList[0] fallback.
+        // ── Active model resolution ───────────────────────────────────────────
+        // Priority 1: Transcript — exact display name from USER_SETTINGS_CHANGE
+        //             system message (injected by IDE on every model switch).
+        //             Direct name match against LSP list, no ID mapping needed.
+        // Priority 2: SQLite — activeModelId from IDE's own DB, match by ID.
+        //             Reliable across sessions but requires Python + ID mapping.
+        // No list[0] fallback — if both fail, keep last known good value (sticky).
         if (cachedLspData && cachedLspData.modelsList && cachedLspData.modelsList.length > 0) {
             data.email      = cachedLspData.email;
             data.plan       = cachedLspData.plan;
             data.modelsList = cachedLspData.modelsList;
 
-            const sqliteActiveId = getActiveModelIdFromSqlite();
             let activeModelObj = null;
-            if (sqliteActiveId) {
-                activeModelObj = cachedLspData.modelsList.find(m => m.id === sqliteActiveId) || null;
+
+            // P1: transcript name — exact display name match
+            if (transcriptActiveModel) {
+                activeModelObj = cachedLspData.modelsList.find(m => m.name === transcriptActiveModel) || null;
+            }
+
+            // P2: SQLite ID — match by internal model ID
+            if (!activeModelObj) {
+                const sqliteActiveId = getActiveModelIdFromSqlite();
+                if (sqliteActiveId) {
+                    activeModelObj = cachedLspData.modelsList.find(m => m.id === sqliteActiveId) || null;
+                }
             }
 
             if (activeModelObj) {
+                // Resolved — update sticky cache
                 data.activeModel                  = activeModelObj.name;
                 data.activeModelExpiration        = activeModelObj.expiration;
                 data.activeModelRemainingFraction = activeModelObj.remainingFraction;
+                lastResolvedActiveModel                  = activeModelObj.name;
+                lastResolvedActiveModelExpiration        = activeModelObj.expiration;
+                lastResolvedActiveModelRemainingFraction = activeModelObj.remainingFraction;
+            } else if (lastResolvedActiveModel) {
+                // Both sources failed — freeze at last known good value
+                data.activeModel                  = lastResolvedActiveModel;
+                data.activeModelExpiration        = lastResolvedActiveModelExpiration;
+                data.activeModelRemainingFraction = lastResolvedActiveModelRemainingFraction;
             }
-            // If SQLite ID not resolved: keep data.activeModel as default ('Gemini 3.5 Flash (High)')
-            // — no random jumping to whatever list[0] happens to be.
+            // If no lastResolved either: keep data.activeModel as safe default string
         } else {
-            // LSP not yet available: use SQLite model name directly
+            // LSP not yet available — use SQLite model name directly
             const modelInfo = getSqliteModelInfo();
             if (modelInfo) {
-                if (modelInfo.activeModel) data.activeModel = modelInfo.activeModel;
+                if (modelInfo.activeModel) {
+                    data.activeModel = modelInfo.activeModel;
+                    lastResolvedActiveModel = modelInfo.activeModel;
+                }
                 data.activeModelExpiration        = modelInfo.expiration;
                 data.activeModelRemainingFraction = modelInfo.remainingFraction;
                 data.modelsList                   = modelInfo.models || [];
+            } else if (lastResolvedActiveModel) {
+                // SQLite also unavailable — freeze at last known good
+                data.activeModel                  = lastResolvedActiveModel;
+                data.activeModelExpiration        = lastResolvedActiveModelExpiration;
+                data.activeModelRemainingFraction = lastResolvedActiveModelRemainingFraction;
             }
         }
 
