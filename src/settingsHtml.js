@@ -121,7 +121,6 @@ module.exports = function buildSettingsHtml(data) {
     const totalClicks     = data.totalClicks || 0;
     const clickLog        = data.clickLog || [];
     const version         = data.version || '1.0.0';
-    const nonce           = data.nonce || '';
 
     const allowMode = data.allowMode || 'all';
     const selective = data.selectivePermissions || { browser: true, command: true, files: true, planning: true };
@@ -167,7 +166,6 @@ module.exports = function buildSettingsHtml(data) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}' 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: 'self'; font-src 'self' data:;">
     <title>Antigravity Super Sentinel</title>
     <style>
         :root {
@@ -807,15 +805,15 @@ module.exports = function buildSettingsHtml(data) {
 
         <!-- Tabs: Radar | Skills/MCP | Clicker -->
         <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('radar')">
+            <button class="tab-btn active" onclick="switchTab('radar', this)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path><path d="M2 12h20"></path></svg>
                 Radar
             </button>
-            <button class="tab-btn" onclick="switchTab('skills')">
+            <button class="tab-btn" onclick="switchTab('skills', this)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
                 Skills/MCP
             </button>
-            <button class="tab-btn" onclick="switchTab('clicker')">
+            <button class="tab-btn" onclick="switchTab('clicker', this)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
                 Clicker
             </button>
@@ -1060,7 +1058,7 @@ module.exports = function buildSettingsHtml(data) {
 
     <div class="toast" id="toast-notify">Settings Saved!</div>
 
-    <script nonce="${nonce}">
+    <script>
         const vscode = acquireVsCodeApi();
         let activePatterns = ${JSON.stringify(clickPatterns)};
         let currentAllowMode = '${allowMode}';
@@ -1077,12 +1075,13 @@ module.exports = function buildSettingsHtml(data) {
             }
         }
 
-        // ── Tab switching — EXACT v2.2.0 pattern (event.currentTarget) ──────────────
-        function switchTab(tabId) {
-            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-            event.currentTarget.classList.add('active');
-            document.getElementById('tab-' + tabId).classList.add('active');
+        // ── Tab switching — uses explicit "this" parameter, no window.event dependency ──
+        function switchTab(tabId, btn) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            btn.classList.add('active');
+            const tabEl = document.getElementById('tab-' + tabId);
+            if (tabEl) tabEl.classList.add('active');
         }
 
         function updateRangeLabel(id, text) {
@@ -1373,16 +1372,19 @@ module.exports = function buildSettingsHtml(data) {
         function updateOverwatchUi(data) {
             renderCachedAccounts(data.cachedAccounts, data.email);
 
+            const _statusEl = document.getElementById('radar-active-status');
+            const _badgeEl  = document.getElementById('radar-active-badge');
             if (!data.sessionActive) {
-                document.getElementById('radar-active-status').innerText = 'OFFLINE';
-                document.getElementById('radar-active-badge').classList.add('inactive');
+                if (_statusEl) _statusEl.innerText = 'OFFLINE';
+                if (_badgeEl)  _badgeEl.classList.add('inactive');
                 return;
             }
 
             // Session info
-            document.getElementById('radar-session-id').innerText = 'ID: ' + (data.sessionId ? data.sessionId.substring(0, 20) + '...' : 'N/A');
-            document.getElementById('radar-active-status').innerText = 'ACTIVE';
-            document.getElementById('radar-active-badge').classList.remove('inactive');
+            const _sidEl = document.getElementById('radar-session-id');
+            if (_sidEl) _sidEl.innerText = 'ID: ' + (data.sessionId ? data.sessionId.substring(0, 20) + '...' : 'N/A');
+            if (_statusEl) _statusEl.innerText = 'ACTIVE';
+            if (_badgeEl)  _badgeEl.classList.remove('inactive');
 
             // Active model — null means "Detecting..."
             const modelEl = document.getElementById('radar-model');
@@ -1476,20 +1478,25 @@ module.exports = function buildSettingsHtml(data) {
             }
 
             // Context window gauge
-            const percent = Math.min(Math.round((data.estimatedTokens / data.contextLimit) * 100), 100);
-            document.getElementById('radar-token-percent').innerText = percent + '%';
-            const fill = document.getElementById('radar-token-fill');
-            fill.style.width = percent + '%';
-            fill.className = 'progress-bar-fill';
-            let statusText = 'Normal';
-            if (percent >= 90) { fill.classList.add('danger'); statusText = 'CRITICAL LIMIT'; }
-            else if (percent >= 75) { fill.classList.add('warning'); statusText = 'Compacting Near'; }
-            document.getElementById('radar-compaction-status').innerText = statusText;
-            document.getElementById('radar-compaction-status').style.color =
-                statusText === 'CRITICAL LIMIT' ? 'var(--color-red)' :
-                (statusText === 'Compacting Near' ? 'var(--color-yellow)' : 'var(--text-secondary)');
-            const formatNumber = n => n.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
-            document.getElementById('radar-token-value').innerText = formatNumber(data.estimatedTokens) + ' / ' + formatNumber(data.contextLimit) + ' Tokens';
+            const _pct  = Math.min(Math.round((data.estimatedTokens / (data.contextLimit || 1)) * 100), 100);
+            const _pctEl = document.getElementById('radar-token-percent');
+            const _fill  = document.getElementById('radar-token-fill');
+            const _compEl = document.getElementById('radar-compaction-status');
+            const _tokEl  = document.getElementById('radar-token-value');
+            if (_pctEl) _pctEl.innerText = _pct + '%';
+            if (_fill) {
+                _fill.style.width = _pct + '%';
+                _fill.className = 'progress-bar-fill';
+                if (_pct >= 90) { _fill.classList.add('danger'); }
+                else if (_pct >= 75) { _fill.classList.add('warning'); }
+            }
+            const _statusTxt = _pct >= 90 ? 'CRITICAL LIMIT' : (_pct >= 75 ? 'Compacting Near' : 'Normal');
+            if (_compEl) {
+                _compEl.innerText = _statusTxt;
+                _compEl.style.color = _statusTxt === 'CRITICAL LIMIT' ? 'var(--color-red)' : (_statusTxt === 'Compacting Near' ? 'var(--color-yellow)' : 'var(--text-secondary)');
+            }
+            const _fmt = n => n.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
+            if (_tokEl) _tokEl.innerText = _fmt(data.estimatedTokens) + ' / ' + _fmt(data.contextLimit) + ' Tokens';
 
             // Skills & MCP
             renderSkills(data.skills);
