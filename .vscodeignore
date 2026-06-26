@@ -1,16 +1,6 @@
-# Build artifacts & local VSIX files
-*.vsix
-
-# Dev/test files
-.vscode/
-.agents/
 AGENTS.md
-
-# Git
-.git/
+BACA_KEINGINANKU.md
+src/query_model_info.py
 .gitignore
-
-# OS artifacts
-.DS_Store
-Thumbs.db
-desktop.ini
+**/.git/**
+**/*.vsix

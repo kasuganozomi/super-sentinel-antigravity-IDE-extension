@@ -1,11 +1,27 @@
 {
 	"name": "antigravity-super-sentinel",
 	"displayName": "Antigravity Super Sentinel",
-	"description": "Agents Utility Dashboard for Google Antigravity IDE",
-	"version": "2.4.3",
+	"description": "Live agent dashboard, smart auto-clicker, and session telemetry for Google Antigravity IDE.",
+	"version": "2.5.0",
 	"publisher": "IKadzura",
 	"license": "MIT",
 	"icon": "media/icon.png",
+	"keywords": [
+		"antigravity",
+		"agent",
+		"dashboard",
+		"automation",
+		"auto-click",
+		"telemetry",
+		"session",
+		"quota",
+		"AI",
+		"productivity"
+	],
+	"galleryBanner": {
+		"color": "#0d0d0d",
+		"theme": "dark"
+	},
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/kasuganozomi/super-sentinel-antigravity-IDE-extension.git"
@@ -19,18 +35,6 @@
 	},
 	"extensionKind": [
 		"workspace"
-	],
-	"keywords": [
-		"antigravity",
-		"gemini",
-		"agent",
-		"auto-accept",
-		"auto-approve",
-		"quota",
-		"dashboard",
-		"sentinel",
-		"clicker",
-		"telemetry"
 	],
 	"categories": [
 		"Other"

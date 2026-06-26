@@ -3,13 +3,21 @@ function formatCountdownServer(expiration) {
     const now = Math.floor(Date.now() / 1000);
     const diff = expiration - now;
     if (diff <= 0) return 'Quota Available';
+    
     const r = Math.floor(diff / 60);
     const n = Math.floor(r / 1440);
     const a = Math.floor((r % 1440) / 60);
     const i = r % 60;
-    if (n > 0) return `Refreshes in ${n} day${n > 1 ? 's' : ''}, ${a} hour${a > 1 ? 's' : ''}`;
-    if (a > 0) return `Refreshes in ${a} hour${a > 1 ? 's' : ''}, ${i} minute${i > 1 ? 's' : ''}`;
-    return `Refreshes in ${i} minute${i > 1 ? 's' : ''}`;
+    
+    let timeStr = '';
+    if (n > 0) {
+        timeStr = `${n} day${n > 1 ? 's' : ''}, ${a} hour${a > 1 ? 's' : ''}`;
+    } else if (a > 0) {
+        timeStr = `${a} hour${a > 1 ? 's' : ''}, ${i} minute${i > 1 ? 's' : ''}`;
+    } else {
+        timeStr = `${i} minute${i > 1 ? 's' : ''}`;
+    }
+    return `Refreshes in ${timeStr}`;
 }
 
 function getCountdownColorServer(expiration) {
@@ -37,12 +45,13 @@ function buildModelsListHtml(modelsList, activeModel) {
         'Claude Opus 4.6 (Thinking)',
         'GPT-OSS 120B (Medium)'
     ];
+    
     const sortedModels = [...modelsList].sort((a, b) => {
-        // Active model always first — immediately visible without scrolling
-        if (a.name === activeModel) return -1;
-        if (b.name === activeModel) return 1;
-        const ia = order.indexOf(a.name); const ib = order.indexOf(b.name);
-        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+        const indexA = order.indexOf(a.name);
+        const indexB = order.indexOf(b.name);
+        const valA = indexA === -1 ? 999 : indexA;
+        const valB = indexB === -1 ? 999 : indexB;
+        return valA - valB;
     });
 
     return sortedModels.map(m => {
@@ -52,11 +61,19 @@ function buildModelsListHtml(modelsList, activeModel) {
         const r = m.remainingFraction !== undefined && m.remainingFraction !== null ? m.remainingFraction : 0.0;
         const barColorClass = r < 0.1 ? 'bg-red' : (r < 0.25 ? 'bg-yellow' : 'bg-green');
         const segmentsHtml = [0,1,2,3,4].map(s => {
-            const o = s * 0.2, u = (s + 1) * 0.2;
+            const o = s * 0.2;
+            const u = (s + 1) * 0.2;
             let d = 0;
-            if (r >= u) d = 100;
-            else if (r > o) d = Math.round((r - o) / 0.2 * 100);
-            return `<div class="quota-segment"><div class="quota-segment-fill ${barColorClass}" style="width: ${d}%"></div></div>`;
+            if (r >= u) {
+                d = 100;
+            } else if (r > o) {
+                d = Math.round((r - o) / 0.2 * 100);
+            }
+            return `
+                <div class="quota-segment">
+                    <div class="quota-segment-fill ${barColorClass}" style="width: ${d}%"></div>
+                </div>
+            `;
         }).join('');
         const mimeStr = m.mimeTypeCount ? m.mimeTypeCount + ' types' : 'N/A';
         return `
@@ -70,10 +87,12 @@ function buildModelsListHtml(modelsList, activeModel) {
                         <span class="countdown-text">${countdownStr}</span>
                     </div>
                 </div>
-                <div class="quota-bar-container">${segmentsHtml}</div>
-                <div class="model-quota-meta">
+                <div class="quota-bar-container">
+                    ${segmentsHtml}
+                </div>
+                <div class="model-quota-meta" style="margin-top: 3px; font-size: 8px;">
                     <span class="model-quota-mime">${mimeStr}</span>
-                    <span class="quota-badge ${hasQuota ? 'available' : 'exhausted'}">${hasQuota ? 'Available' : 'Exhausted'}</span>
+                    <span class="quota-badge ${hasQuota ? 'available' : 'exhausted'}" style="padding: 1px 4px; font-size: 8px;">${hasQuota ? 'Available' : 'Exhausted'}</span>
                 </div>
             </div>
         `;
@@ -85,11 +104,13 @@ function buildCachedAccountsHtml(cachedAccounts, activeEmail) {
     if (inactiveAccounts.length === 0) {
         return '<div class="empty-logs" style="padding: 10px 0; text-align: center;">No cached account history.</div>';
     }
+
     return inactiveAccounts.map((acc, index) => {
         const id = `acc-history-${index}`;
         const planClass = acc.plan && acc.plan !== 'Free' ? 'available' : 'exhausted';
         const modelsHtml = buildModelsListHtml(acc.modelsList, acc.activeModel);
         const lastSeenDate = acc.lastSeen ? new Date(acc.lastSeen).toLocaleDateString() : 'Unknown';
+
         return `
             <div class="glass-panel" style="margin-bottom: 8px; padding: 10px; border-color: rgba(168, 85, 247, 0.1); width: 100%;">
                 <div class="collapsible-header" onclick="toggleExpand('${id}-body', '${id}-arrow')" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
@@ -104,7 +125,9 @@ function buildCachedAccountsHtml(cachedAccounts, activeEmail) {
                 </div>
                 <div id="${id}-body" style="display: none; flex-direction: column; gap: 6px; border-top: 1px solid var(--border-color); padding-top: 8px; margin-top: 8px; width: 100%;">
                     <div style="font-size: 9px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 2px;">Last Known Quotas</div>
-                    <div class="models-list" style="display: flex; flex-direction: column; gap: 6px; width: 100%;">${modelsHtml}</div>
+                    <div class="models-list" style="display: flex; flex-direction: column; gap: 6px; width: 100%;">
+                        ${modelsHtml}
+                    </div>
                 </div>
             </div>
         `;
@@ -112,38 +135,48 @@ function buildCachedAccountsHtml(cachedAccounts, activeEmail) {
 }
 
 module.exports = function buildSettingsHtml(data) {
-    const isEnabled       = data.enabled !== false;
+    const isEnabled = data.enabled !== false;
     const isScrollEnabled = data.scrollEnabled !== false;
-    const scrollPauseMs   = data.scrollPauseMs || 7000;
+    const scrollPauseMs = data.scrollPauseMs || 7000;
     const clickIntervalMs = data.clickIntervalMs || 1000;
     const scrollIntervalMs = data.scrollIntervalMs || 500;
-    const clickPatterns   = data.clickPatterns || [];
-    const totalClicks     = data.totalClicks || 0;
-    const clickLog        = data.clickLog || [];
-    const version         = data.version || '1.0.0';
+    const clickPatterns = data.clickPatterns || [];
+    const totalClicks = data.totalClicks || 0;
+    const clickLog = data.clickLog || [];
+    const version = data.version || '1.0.0';
 
-    const allowMode = data.allowMode || 'all';
-    const selective = data.selectivePermissions || { browser: true, command: true, files: true, planning: true };
+    // Selective permissions state
+    const allowMode = data.allowMode || 'all'; 
+    const selective = data.selectivePermissions || {
+        browser: true,
+        command: true,
+        files: true,
+        planning: true
+    };
 
     const overwatch = data.overwatch || {
         sessionActive: false,
         sessionId: '',
-        activeModel: null,
+        activeModel: 'Gemini 3.5 Flash (High)',
         activeModelExpiration: null,
         modelsList: [],
+        stepsCount: 0,
+        stepsLimit: 100,
         estimatedTokens: 0,
         contextLimit: 1000000,
         warningThreshold: 750000,
+        steps: [],
         skills: [],
-        mcpServers: []
+        mcpServers: [],
+        browserFrames: [],
+        childSessions: []
     };
 
     const initialQuotaPct = Math.round((overwatch.activeModelRemainingFraction || 0.0) * 100);
-    const quotaColor      = initialQuotaPct < 10 ? 'var(--color-red)' : (initialQuotaPct < 25 ? 'var(--color-yellow)' : 'var(--color-green)');
+    const quotaColor = initialQuotaPct < 10 ? 'var(--color-red)' : (initialQuotaPct < 25 ? 'var(--color-yellow)' : 'var(--color-green)');
     const initialPlanClass = overwatch.plan && overwatch.plan !== 'Free' ? 'available' : 'exhausted';
-    const activeModelDisplay = overwatch.activeModel || 'Detecting...';
-    const isDetecting = !overwatch.activeModel;
 
+    // Build pattern chips HTML
     const chipsHtml = clickPatterns.map(p => `
         <span class="chip" data-pattern="${p}">
             ${p}
@@ -151,6 +184,7 @@ module.exports = function buildSettingsHtml(data) {
         </span>
     `).join('');
 
+    // Build log stream HTML
     const logItemsHtml = clickLog.map(log => `
         <div class="log-item">
             <span class="log-time">[${log.time || ''}]</span>
@@ -169,24 +203,32 @@ module.exports = function buildSettingsHtml(data) {
     <title>Antigravity Super Sentinel</title>
     <style>
         :root {
-            --bg-base: #0c0817;
+            --bg-base: #0c0817; /* Deep cyberpunk purple-black */
             --bg-sidebar: #05030a;
-            --bg-panel: rgba(26, 15, 46, 0.45);
-            --border-color: rgba(244, 114, 182, 0.18);
-            --text-primary: #fdf2f8;
-            --text-secondary: #d8b4fe;
-            --text-muted: #7c5b9e;
-            --color-blue: #a855f7;
-            --color-green: #10b981;
-            --color-yellow: #f59e0b;
-            --color-red: #ef4444;
-            --color-rose: #f472b6;
+            --bg-panel: rgba(26, 15, 46, 0.45); /* Translucent neon-purple glass */
+            --border-color: rgba(244, 114, 182, 0.18); /* Glowy pinkish border */
+            
+            --text-primary: #fdf2f8; /* Soft pink-white */
+            --text-secondary: #d8b4fe; /* Bright pastel purple */
+            --text-muted: #7c5b9e; /* Muted neon purple */
+            
+            --color-blue: #a855f7; /* Vibrant purple */
+            --color-green: #10b981; /* Emerald green */
+            --color-yellow: #f59e0b; /* Bright gold */
+            --color-red: #ef4444; /* Neon red */
+            --color-rose: #f472b6; /* Neon pink */
+            
             --input-bg: rgba(5, 3, 10, 0.6);
             --input-border: rgba(244, 114, 182, 0.25);
-            --font-stack: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            
+            --font-stack: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
 
         body {
             font-family: var(--font-stack);
@@ -198,19 +240,66 @@ module.exports = function buildSettingsHtml(data) {
             -webkit-font-smoothing: antialiased;
         }
 
-        .container { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+        .container {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
 
+        /* macOS Window Titlebar and traffic lights */
         header {
             background: var(--bg-sidebar);
             border: 1px solid var(--border-color);
             border-radius: 10px;
-            padding: 12px;
+            padding: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: relative;
         }
 
-        /* Tabs */
+        .mac-traffic-lights {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+
+        .mac-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .dot-close { background-color: var(--color-red); }
+        .dot-minimize { background-color: var(--color-yellow); }
+        .dot-expand { background-color: var(--color-green); }
+
+        .title-group {
+            text-align: right;
+        }
+
+        .title-group h1 {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-primary);
+            letter-spacing: -0.2px;
+        }
+
+        .title-group p {
+            font-size: 9px;
+            color: var(--text-secondary);
+            margin-top: 1px;
+            text-transform: uppercase;
+            font-weight: 500;
+            letter-spacing: 0.3px;
+        }
+
+        /* macOS Segmented Control Tabs */
         .tabs {
             display: flex;
-            background: rgba(0,0,0,0.25);
+            background: rgba(0, 0, 0, 0.25);
             padding: 2px;
             border-radius: 8px;
             border: 1px solid var(--border-color);
@@ -231,33 +320,43 @@ module.exports = function buildSettingsHtml(data) {
             display: flex;
             flex-direction: column;
             align-items: center;
+            justify-content: center;
             gap: 3px;
         }
 
-        .tab-btn svg { width: 13px; height: 13px; }
+        .tab-btn svg {
+            width: 13px;
+            height: 13px;
+        }
 
-        .tab-btn:hover { color: var(--text-primary); background: rgba(255,255,255,0.03); }
+        .tab-btn:hover {
+            color: var(--text-primary);
+            background: rgba(255, 255, 255, 0.03);
+        }
 
         .tab-btn.active {
             color: var(--text-primary);
-            background: rgba(255,255,255,0.08);
-            box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            background: rgba(255, 255, 255, 0.08);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
             font-weight: 600;
         }
 
+        /* Tab Content */
         .tab-content {
             display: none;
             animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
 
-        .tab-content.active { display: block; }
+        .tab-content.active {
+            display: block;
+        }
 
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(4px); }
             to { opacity: 1; transform: translateY(0); }
         }
 
-        /* Panels */
+        /* Panels and Cards */
         .glass-panel {
             background: var(--bg-panel);
             backdrop-filter: blur(10px);
@@ -268,7 +367,7 @@ module.exports = function buildSettingsHtml(data) {
             flex-direction: column;
             gap: 10px;
             margin-bottom: 10px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.4), 0 0 10px rgba(168, 85, 247, 0.05);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4), 0 0 10px rgba(168, 85, 247, 0.05);
         }
 
         .panel-title {
@@ -281,6 +380,7 @@ module.exports = function buildSettingsHtml(data) {
             padding-bottom: 6px;
         }
 
+        /* Pulse indicators */
         .status-badge {
             display: inline-flex;
             align-items: center;
@@ -294,7 +394,10 @@ module.exports = function buildSettingsHtml(data) {
             width: fit-content;
         }
 
-        .status-badge.inactive { background: rgba(82,82,91,0.2); color: var(--text-secondary); }
+        .status-badge.inactive {
+            background: rgba(82, 82, 91, 0.2);
+            color: var(--text-secondary);
+        }
 
         .pulse-dot {
             width: 6px;
@@ -306,11 +409,17 @@ module.exports = function buildSettingsHtml(data) {
         }
 
         @keyframes pulseGlow {
-            0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; }
+            0% { opacity: 0.4; }
+            50% { opacity: 1; }
+            100% { opacity: 0.4; }
         }
 
-        /* Context bar */
-        .token-metric { display: flex; flex-direction: column; gap: 4px; }
+        /* Context Token Progress Bar */
+        .token-metric {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
 
         .metric-header {
             display: flex;
@@ -322,10 +431,11 @@ module.exports = function buildSettingsHtml(data) {
         .progress-bar-container {
             width: 100%;
             height: 8px;
-            background: rgba(0,0,0,0.3);
+            background: rgba(0, 0, 0, 0.3);
             border-radius: 4px;
             border: 1px solid var(--border-color);
             overflow: hidden;
+            position: relative;
         }
 
         .progress-bar-fill {
@@ -337,79 +447,133 @@ module.exports = function buildSettingsHtml(data) {
             box-shadow: 0 0 6px var(--color-blue);
         }
 
-        .progress-bar-fill.warning { background: linear-gradient(90deg, var(--color-yellow), #f97316); box-shadow: 0 0 6px var(--color-yellow); }
-        .progress-bar-fill.danger { background: var(--color-red); box-shadow: 0 0 8px var(--color-red); }
+        .progress-bar-fill.warning {
+            background: linear-gradient(90deg, var(--color-yellow), #f97316);
+            box-shadow: 0 0 6px var(--color-yellow);
+        }
 
-        /* ── Skills grid — uniform card height, 3-line description ── */
+        .progress-bar-fill.danger {
+            background: var(--color-red);
+            box-shadow: 0 0 8px var(--color-red);
+        }
+
+        /* Timeline stepper */
+        .timeline {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            max-height: 250px;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+
+        .timeline-step {
+            display: flex;
+            gap: 8px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 8px;
+        }
+
+        .step-index-badge {
+            background: rgba(255, 255, 255, 0.06);
+            border-radius: 6px;
+            width: 18px;
+            height: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 9px;
+            font-weight: bold;
+            color: var(--text-secondary);
+            flex-shrink: 0;
+        }
+
+        .step-details {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            flex: 1;
+        }
+
+        .step-title {
+            font-weight: 600;
+            font-size: 11px;
+        }
+
+        .step-meta {
+            font-size: 9px;
+            color: var(--text-secondary);
+            display: flex;
+            gap: 8px;
+        }
+
+        .step-status {
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+
+        .step-status.done { color: var(--color-green); }
+        .step-status.error { color: var(--color-red); }
+        .step-status.pending { color: var(--color-yellow); }
+
+
+        /* Lists & Grids */
         .skills-grid {
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 6px;
         }
 
-        .skill-card {
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            gap: 8px;
-            background: rgba(255,255,255,0.02);
+        .skill-item {
+            background: rgba(255, 255, 255, 0.02);
             border: 1px solid var(--border-color);
             border-radius: 8px;
-            padding: 10px;
-            min-height: 96px;          /* uniform card height */
-            transition: border-color 0.15s ease;
+            padding: 8px;
         }
 
-        .skill-card:hover {
-            border-color: rgba(244, 114, 182, 0.35);
-        }
-
-        .skill-card-top { flex: 1; display: flex; flex-direction: column; gap: 4px; }
-
-        .skill-name {
+        .skill-item h4 {
             font-size: 11px;
-            font-weight: 700;
+            font-weight: 600;
             color: var(--color-rose);
+        }
+
+        .skill-item p {
+            font-size: 10px;
+            color: var(--text-secondary);
+            margin-top: 2px;
             line-height: 1.3;
         }
 
-        .skill-desc {
-            font-size: 9.5px;
-            color: var(--text-secondary);
-            line-height: 1.4;
-            /* 3-line clamp — uniform across all cards */
-            display: -webkit-box;
-            -webkit-line-clamp: 3;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
-        }
-
-        .skill-footer {
+        .mcp-list {
             display: flex;
-            align-items: center;
-            justify-content: flex-end;
+            flex-direction: column;
+            gap: 6px;
         }
-
-        /* MCP item */
-        .mcp-list { display: flex; flex-direction: column; gap: 6px; }
 
         .mcp-item {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            background: rgba(255,255,255,0.02);
+            background: rgba(255, 255, 255, 0.02);
             border: 1px solid var(--border-color);
             border-radius: 8px;
-            padding: 8px 10px;
-            transition: border-color 0.15s ease;
+            padding: 8px;
         }
 
-        .mcp-item:hover { border-color: rgba(168, 85, 247, 0.35); }
+        .mcp-item-name {
+            font-weight: 600;
+        }
 
-        .mcp-item-name { font-weight: 700; font-size: 11px; color: var(--text-primary); }
-        .mcp-item-cmd { font-size: 9px; color: var(--text-secondary); font-family: monospace; margin-top: 2px; }
+        .mcp-item-cmd {
+            font-size: 9px;
+            color: var(--text-secondary);
+            font-family: monospace;
+            margin-top: 1px;
+        }
 
-        /* Controls */
+        /* Switches and controls (Legacy Submenu) */
         .control-row {
             display: flex;
             align-items: center;
@@ -417,10 +581,23 @@ module.exports = function buildSettingsHtml(data) {
             gap: 10px;
         }
 
-        .control-info { flex: 1; }
-        .control-info h4 { font-size: 11px; font-weight: 500; }
-        .control-info p { font-size: 9px; color: var(--text-secondary); margin-top: 1px; line-height: 1.2; }
+        .control-info {
+            flex: 1;
+        }
 
+        .control-info h4 {
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .control-info p {
+            font-size: 9px;
+            color: var(--text-secondary);
+            margin-top: 1px;
+            line-height: 1.2;
+        }
+
+        /* macOS Switch sliders */
         .switch {
             position: relative;
             display: inline-block;
@@ -429,13 +606,20 @@ module.exports = function buildSettingsHtml(data) {
             flex-shrink: 0;
         }
 
-        .switch input { opacity: 0; width: 0; height: 0; }
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
 
         .slider {
             position: absolute;
             cursor: pointer;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background-color: rgba(255,255,255,0.08);
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(255, 255, 255, 0.08);
             transition: .15s;
             border-radius: 18px;
             border: 1px solid var(--border-color);
@@ -451,14 +635,21 @@ module.exports = function buildSettingsHtml(data) {
             background-color: #fff;
             transition: .15s;
             border-radius: 50%;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
         }
 
-        input:checked + .slider { background-color: var(--color-green); border-color: rgba(52,199,89,0.2); }
-        input:checked + .slider:before { transform: translateX(14px); }
+        input:checked + .slider {
+            background-color: var(--color-green);
+            border-color: rgba(52, 199, 89, 0.2);
+        }
 
+        input:checked + .slider:before {
+            transform: translateX(14px);
+        }
+
+        /* Chip Input and Patterns styles */
         .chips-container {
-            background: rgba(0,0,0,0.15);
+            background: rgba(0, 0, 0, 0.15);
             border: 1px solid var(--border-color);
             border-radius: 8px;
             padding: 8px;
@@ -473,7 +664,7 @@ module.exports = function buildSettingsHtml(data) {
         }
 
         .chip {
-            background: rgba(255,255,255,0.03);
+            background: rgba(255, 255, 255, 0.03);
             border: 1px solid var(--border-color);
             color: var(--text-primary);
             padding: 2px 6px;
@@ -485,10 +676,20 @@ module.exports = function buildSettingsHtml(data) {
             gap: 3px;
         }
 
-        .remove-chip { cursor: pointer; color: var(--text-secondary); font-weight: bold; }
-        .remove-chip:hover { color: var(--color-red); }
+        .remove-chip {
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-weight: bold;
+        }
 
-        .add-pattern-row { display: flex; gap: 4px; }
+        .remove-chip:hover {
+            color: var(--color-red);
+        }
+
+        .add-pattern-row {
+            display: flex;
+            gap: 4px;
+        }
 
         .add-pattern-row input {
             flex: 1;
@@ -502,11 +703,13 @@ module.exports = function buildSettingsHtml(data) {
             font-size: 10px;
         }
 
-        .add-pattern-row input:focus { border-color: var(--color-blue); }
+        .add-pattern-row input:focus {
+            border-color: var(--color-blue);
+        }
 
         /* Buttons */
         .btn-secondary {
-            background: rgba(255,255,255,0.04);
+            background: rgba(255, 255, 255, 0.04);
             border: 1px solid var(--border-color);
             color: var(--text-primary);
             padding: 5px 8px;
@@ -514,16 +717,17 @@ module.exports = function buildSettingsHtml(data) {
             font-size: 10px;
             font-weight: 500;
             cursor: pointer;
-            font-family: inherit;
         }
 
-        .btn-secondary:hover { background: rgba(255,255,255,0.08); }
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
 
         .btn-primary {
             width: 100%;
             background: var(--color-blue);
             border: none;
-            color: #fff;
+            color: #ffffff;
             padding: 7px;
             border-radius: 6px;
             font-family: inherit;
@@ -533,28 +737,14 @@ module.exports = function buildSettingsHtml(data) {
             margin-top: 4px;
         }
 
-        .btn-copy {
-            background: var(--bg-sidebar);
-            border: 1px solid var(--border-color);
-            color: var(--color-rose);
-            padding: 3px 8px;
-            border-radius: 4px;
-            font-size: 9px;
-            font-weight: 700;
-            cursor: pointer;
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            transition: border-color 0.15s ease, color 0.15s ease;
-            font-family: inherit;
+        .btn-primary:hover {
+            background: #0062cc;
         }
 
-        .btn-copy:hover { border-color: var(--color-rose); }
-
-        .btn-copy.mcp { color: var(--color-blue); }
-        .btn-copy.mcp:hover { border-color: var(--color-blue); }
-
-        .form-group { margin-bottom: 8px; }
+        /* Form slider metrics */
+        .form-group {
+            margin-bottom: 8px;
+        }
 
         .form-group label {
             display: flex;
@@ -566,29 +756,34 @@ module.exports = function buildSettingsHtml(data) {
             margin-bottom: 3px;
         }
 
-        .form-group label span { color: var(--color-blue); font-weight: 600; }
+        .form-group label span {
+            color: var(--color-blue);
+            font-weight: 600;
+        }
 
         input[type="range"] {
             -webkit-appearance: none;
             width: 100%;
             height: 2px;
-            background: rgba(255,255,255,0.08);
+            background: rgba(255, 255, 255, 0.08);
             border-radius: 10px;
             outline: none;
         }
 
         input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
-            width: 10px; height: 10px;
+            width: 10px;
+            height: 10px;
             border-radius: 50%;
-            background: #fff;
+            background: #ffffff;
             cursor: pointer;
             box-shadow: 0 1px 2px rgba(0,0,0,0.3);
         }
 
+        /* Mode Selection Capsule style */
         .mode-selector {
             display: flex;
-            background: rgba(0,0,0,0.25);
+            background: rgba(0, 0, 0, 0.25);
             padding: 2px;
             border-radius: 6px;
             border: 1px solid var(--border-color);
@@ -606,10 +801,13 @@ module.exports = function buildSettingsHtml(data) {
             border-radius: 4px;
             cursor: pointer;
             transition: all 0.15s ease;
-            font-family: inherit;
         }
 
-        .mode-btn.active { background: var(--color-blue); color: #fff; font-weight: 600; }
+        .mode-btn.active {
+            background: var(--color-blue);
+            color: #fff;
+            font-weight: 600;
+        }
 
         .selective-panel-list {
             display: flex;
@@ -619,11 +817,12 @@ module.exports = function buildSettingsHtml(data) {
             border-top: 1px dashed var(--border-color);
         }
 
+        /* Log console styling */
         .console-card {
-            background: rgba(0,0,0,0.25);
+            background: rgba(0, 0, 0, 0.25);
             border: 1px solid var(--border-color);
             border-radius: 8px;
-            font-family: monospace;
+            font-family: -apple-system, BlinkMacSystemFont, monospace;
             padding: 6px;
             height: 180px;
             overflow-y: auto;
@@ -631,38 +830,73 @@ module.exports = function buildSettingsHtml(data) {
             color: var(--text-primary);
         }
 
+        .console-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+
+        .console-header h4 {
+            font-size: 9px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
         .log-item {
             padding: 3px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.01);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.01);
             line-height: 1.3;
             display: flex;
             align-items: flex-start;
             gap: 4px;
         }
 
-        .log-time { color: var(--text-secondary); white-space: nowrap; }
-        .log-bullet { color: var(--color-blue); display: flex; align-items: center; margin-top: 2px; }
-        .log-text { color: #d1d1d6; }
-        .highlight-btn { color: var(--color-blue); font-weight: 500; }
-        .highlight-pat { color: var(--color-green); }
+        .log-time {
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+
+        .log-bullet {
+            color: var(--color-blue);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-top: 2px;
+        }
+
+        .log-text {
+            color: #d1d1d6;
+        }
+
+        .highlight-btn {
+            color: var(--color-blue);
+            font-weight: 500;
+        }
+
+        .highlight-pat {
+            color: var(--color-green);
+        }
 
         .empty-logs {
             color: var(--text-muted);
             text-align: center;
             padding: 60px 0;
             font-style: italic;
-            font-size: 11px;
         }
 
+        /* Toast */
         .toast {
             position: fixed;
             bottom: 15px;
             left: 50%;
             transform: translate(-50%, 100px);
-            background: rgba(52,199,89,0.95);
+            background: rgba(52, 199, 89, 0.95);
             color: white;
             padding: 4px 10px;
             border-radius: 6px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
             font-weight: 500;
             font-size: 10px;
             opacity: 0;
@@ -671,29 +905,36 @@ module.exports = function buildSettingsHtml(data) {
             pointer-events: none;
         }
 
-        .toast.show { transform: translate(-50%, 0); opacity: 1; }
+        .toast.show {
+            transform: translate(-50%, 0);
+            opacity: 1;
+        }
 
-        /* Model quota rows */
+        /* Model Quotas and status styles */
         .model-quota-row {
             display: flex;
             flex-direction: column;
             gap: 6px;
             padding: 8px 10px;
-            background: rgba(255,255,255,0.02);
-            border: 1px solid rgba(255,255,255,0.05);
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
             border-radius: 8px;
             font-size: 10px;
             transition: all 0.2s ease;
         }
-
+        
         .model-quota-row.active {
-            border-color: rgba(0,122,255,0.35);
-            background: rgba(0,122,255,0.06);
-            box-shadow: 0 0 12px rgba(0,122,255,0.08);
+            border-color: rgba(0, 122, 255, 0.35);
+            background: rgba(0, 122, 255, 0.06);
+            box-shadow: 0 0 12px rgba(0, 122, 255, 0.08);
         }
 
-        .model-quota-header { display: flex; align-items: center; justify-content: space-between; }
-
+        .model-quota-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
         .model-quota-name {
             font-weight: 600;
             display: flex;
@@ -701,9 +942,10 @@ module.exports = function buildSettingsHtml(data) {
             gap: 6px;
             font-size: 11px;
         }
-
+        
         .model-quota-active-indicator {
-            width: 6px; height: 6px;
+            width: 6px;
+            height: 6px;
             border-radius: 50%;
             background: var(--color-green);
             box-shadow: 0 0 6px var(--color-green);
@@ -719,8 +961,15 @@ module.exports = function buildSettingsHtml(data) {
             border-radius: 4px;
         }
 
-        .quota-badge.available { background: rgba(52,199,89,0.12); color: var(--color-green); }
-        .quota-badge.exhausted { background: rgba(255,59,48,0.12); color: var(--color-red); }
+        .quota-badge.available {
+            background: rgba(52, 199, 89, 0.12);
+            color: var(--color-green);
+        }
+
+        .quota-badge.exhausted {
+            background: rgba(255, 59, 48, 0.12);
+            color: var(--color-red);
+        }
 
         .model-quota-meta {
             display: flex;
@@ -729,30 +978,98 @@ module.exports = function buildSettingsHtml(data) {
             gap: 8px;
         }
 
-        .model-quota-countdown { font-family: monospace; font-size: 10px; color: var(--text-secondary); }
-        .model-quota-mime { font-size: 8px; color: var(--text-muted); }
-
-        .quota-bar-container { display: flex; gap: 4px; width: 100%; height: 3px; margin-top: 2px; }
-
-        .quota-segment {
-            flex: 1; height: 100%;
-            background: rgba(255,255,255,0.06);
-            border-radius: 2px;
-            overflow: hidden;
+        .model-quota-countdown {
+            font-family: monospace;
+            font-size: 10px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 4px;
         }
 
-        .quota-segment-fill { height: 100%; border-radius: 2px; width: 0%; transition: width 0.3s ease-out; }
-        .quota-segment-fill.bg-red { background: var(--color-red); }
-        .quota-segment-fill.bg-yellow { background: var(--color-yellow); }
-        .quota-segment-fill.bg-green { background: var(--color-green); }
+        .model-quota-countdown svg {
+            width: 10px;
+            height: 10px;
+            opacity: 0.6;
+        }
 
-        .reset-timer { display: flex; flex-direction: column; align-items: flex-end; }
-        .reset-timer-label { font-size: 8px; color: var(--text-secondary); text-transform: uppercase; line-height: 1; }
-        .reset-timer-value { font-size: 13px; font-weight: 700; font-family: monospace; line-height: 1.2; }
+        .model-quota-mime {
+            font-size: 8px;
+            color: var(--text-muted);
+        }
+
+        .quota-bar-container {
+            display: flex;
+            gap: 4px;
+            width: 100%;
+            height: 3px;
+            margin-top: 4px;
+        }
+
+        .quota-segment {
+            flex: 1;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.06);
+            border-radius: 2px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .quota-segment-fill {
+            height: 100%;
+            border-radius: 2px;
+            width: 0%;
+            transition: width 0.3s ease-out;
+        }
+
+        .quota-segment-fill.bg-red {
+            background: var(--color-red);
+        }
+
+        .quota-segment-fill.bg-yellow {
+            background: var(--color-yellow);
+        }
+
+        .quota-segment-fill.bg-green {
+            background: var(--color-green);
+        }
+
+        .provider-group-label {
+            font-size: 8px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            padding: 4px 0 2px;
+            margin-top: 2px;
+        }
+
+        /* Countdown timer in session header */
+        .reset-timer {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+        }
+
+        .reset-timer-label {
+            font-size: 8px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            line-height: 1;
+        }
+
+        .reset-timer-value {
+            font-size: 13px;
+            font-weight: 700;
+            font-family: monospace;
+            line-height: 1.2;
+        }
+
         .reset-timer-value.green { color: var(--color-green); }
         .reset-timer-value.yellow { color: var(--color-yellow); }
         .reset-timer-value.red { color: var(--color-red); }
 
+        /* Accordion Collapsible Headers */
         .collapsible-header {
             cursor: pointer;
             display: flex;
@@ -763,31 +1080,18 @@ module.exports = function buildSettingsHtml(data) {
             margin-bottom: 0 !important;
             transition: color 0.15s ease;
         }
-
         .collapsible-header:hover .collapsible-title-text,
         .collapsible-header:hover .collapsible-arrow {
             color: var(--color-rose) !important;
-        }
-
-        /* Detecting... animated state */
-        .detecting-text {
-            font-style: italic;
-            color: var(--text-muted);
-            font-size: 12px;
-            animation: detectingPulse 2s ease-in-out infinite;
-        }
-
-        @keyframes detectingPulse {
-            0%, 100% { opacity: 0.5; }
-            50% { opacity: 1; }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
+        <!-- macOS Window Titlebar -->
         <header style="display: flex; flex-direction: column; align-items: flex-start; background: var(--bg-sidebar); border: 1px solid var(--border-color); border-radius: 10px; padding: 12px; gap: 6px;">
             <div style="display: flex; align-items: center; gap: 8px;">
+                <!-- Cool neon purple/pink shield/eye icon -->
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="url(#cyber-grad)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="filter: drop-shadow(0 0 4px var(--color-rose));">
                     <defs>
                         <linearGradient id="cyber-grad" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -799,21 +1103,22 @@ module.exports = function buildSettingsHtml(data) {
                 </svg>
                 <h1 style="font-size: 14px; font-weight: 800; letter-spacing: 0.5px; background: linear-gradient(90deg, var(--color-rose), var(--color-blue)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; line-height: 1.2;">Super Sentinel by Kadzura</h1>
             </div>
-            <div style="width: 100%; height: 1px; background: var(--border-color); margin: 2px 0;"></div>
-            <div style="font-size: 9px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px;">Dashboard · v${version}</div>
+            <div style="width: 100%; height: 1px; background: var(--border-color); margin: 4px 0;"></div>
+            <div style="font-size: 9px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px;">Dashboard</div>
         </header>
 
-        <!-- Tabs: Radar | Skills/MCP | Clicker -->
+        <!-- macOS Segmented tabs -->
         <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('radar', this)">
+            <button class="tab-btn active" onclick="switchTab('radar')">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path><path d="M2 12h20"></path></svg>
                 Radar
             </button>
-            <button class="tab-btn" onclick="switchTab('skills', this)">
+
+            <button class="tab-btn" onclick="switchTab('skills')">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
                 Skills/MCP
             </button>
-            <button class="tab-btn" onclick="switchTab('clicker', this)">
+            <button class="tab-btn" onclick="switchTab('clicker')">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
                 Clicker
             </button>
@@ -821,42 +1126,37 @@ module.exports = function buildSettingsHtml(data) {
 
         <!-- RADAR TAB -->
         <div id="tab-radar" class="tab-content active">
-            <!-- Session Status -->
+            <!-- Active Session Details -->
             <div class="glass-panel">
                 <div class="panel-title">Session Status</div>
                 <div style="display: flex; flex-direction: column; gap: 8px;">
-                    <!-- Model & Active badge -->
+                    <!-- Line 1: Model Name & Active Status Badge -->
                     <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <h2 style="font-size: 13px; font-weight: 700; margin: 0;" id="radar-model">
-                            ${isDetecting
-                                ? `<span class="detecting-text">Detecting...</span>`
-                                : activeModelDisplay
-                            }
-                        </h2>
+                        <h2 style="font-size: 13px; font-weight: 700; margin: 0;" id="radar-model">${overwatch.activeModel}</h2>
                         <div class="status-badge ${overwatch.sessionActive ? '' : 'inactive'}" id="radar-active-badge">
                             <span class="pulse-dot"></span>
                             <span id="radar-active-status">${overwatch.sessionActive ? 'ACTIVE' : 'OFFLINE'}</span>
                         </div>
                     </div>
-
-                    <!-- Session ID -->
+                    
+                    <!-- Line 2: Session ID -->
                     <div style="font-size: 9px; color: var(--text-secondary); font-family: monospace;" id="radar-session-id">
                         ID: ${overwatch.sessionId ? overwatch.sessionId.substring(0, 20) + '...' : 'No active session'}
                     </div>
-
-                    <!-- Quota & Reset Timer -->
+                    
+                    <!-- Line 3: Quota Remaining & Reset Timer -->
                     <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); padding: 6px 8px; border-radius: 4px; border: 1px solid var(--border-color);">
-                        <div id="radar-active-quota" style="text-align: left;">
+                        <div class="active-quota-status" id="radar-active-quota" style="text-align: left;">
                             <div style="font-size: 8px; color: var(--text-secondary); text-transform: uppercase; font-weight: 500; line-height: 1;">Quota Remaining</div>
                             <div style="font-size: 13px; font-weight: 700; color: ${quotaColor}; line-height: 1.2; font-family: monospace; margin-top: 2px;" id="radar-active-quota-val">${initialQuotaPct}%</div>
                         </div>
-                        <div class="reset-timer" style="align-items: flex-end;">
+                        <div class="reset-timer" id="radar-reset-timer" style="align-items: flex-end;">
                             <span class="reset-timer-label">Resets in</span>
                             <span class="reset-timer-value ${getCountdownColorServer(overwatch.activeModelExpiration)}" id="radar-reset-value" style="margin-top: 2px;">${formatCountdownServer(overwatch.activeModelExpiration)}</span>
                         </div>
                     </div>
-
-                    <!-- Account & Plan -->
+                    
+                    <!-- Line 4: Account & Plan Info -->
                     <div style="display: flex; justify-content: space-between; align-items: center; font-size: 9px; border-top: 1px solid var(--border-color); padding-top: 6px; margin-top: 2px;">
                         <div>
                             <span style="color: var(--text-secondary);">Account:</span>
@@ -864,13 +1164,13 @@ module.exports = function buildSettingsHtml(data) {
                         </div>
                         <div>
                             <span style="color: var(--text-secondary);">Plan:</span>
-                            <span id="sentinel-plan" class="quota-badge ${initialPlanClass}" style="padding: 1px 4px; font-size: 8px; margin-left: 2px;">${overwatch.plan || 'Free'}</span>
+                            <span id="sentinel-plan" class="quota-badge ${initialPlanClass}" style="padding: 1px 4px; font-size: 8px; margin-left: 2px; text-transform: uppercase; font-weight: 600;">${overwatch.plan || 'Free'}</span>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Account History -->
+            <!-- Account History Collapsible -->
             <div class="glass-panel" id="panel-account-history">
                 <div class="panel-title collapsible-header" onclick="toggleExpand('account-history-body', 'account-history-arrow')">
                     <span class="collapsible-title-text">Account History Cache</span>
@@ -881,7 +1181,7 @@ module.exports = function buildSettingsHtml(data) {
                 </div>
             </div>
 
-            <!-- Context Window -->
+            <!-- Context window Token estimate -->
             <div class="glass-panel">
                 <div class="panel-title">Context Window Usage</div>
                 <div class="token-metric">
@@ -899,30 +1199,35 @@ module.exports = function buildSettingsHtml(data) {
                 </div>
             </div>
 
-            <!-- Model Quotas -->
+            <!-- Model Quotas and Statuses -->
             <div class="glass-panel">
-                <div class="panel-title">Model Quotas &amp; Status</div>
+                <div class="panel-title">Model Quotas & Status</div>
                 <div class="models-list" id="radar-models-list" style="display: flex; flex-direction: column; gap: 6px;">
                     ${buildModelsListHtml(overwatch.modelsList, overwatch.activeModel)}
                 </div>
             </div>
+
+
         </div>
+
+
 
         <!-- SKILLS & MCP TAB -->
         <div id="tab-skills" class="tab-content">
-            <!-- How to Use -->
+            <!-- How to Use Tutorial box -->
             <div class="glass-panel" style="background: rgba(168, 85, 247, 0.08); border-color: rgba(244, 114, 182, 0.25); gap: 6px; padding: 10px;">
                 <div style="font-weight: 800; color: var(--color-rose); display: flex; align-items: center; gap: 6px; font-size: 10.5px;">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-                    How to Use
+                    How to Use Skills & MCP
                 </div>
                 <div style="color: var(--text-secondary); font-size: 9.5px; line-height: 1.4;">
-                    Click <strong style="color: var(--color-rose);">Copy Prompt</strong> on a skill card, then paste in agent chat.<br>
-                    For MCP servers, click <strong style="color: var(--color-blue);">Copy Use</strong> to request the agent use that server.
+                    1. Click the <strong style="color: var(--color-rose);">Copy Prompt</strong> button on any active skill card.<br>
+                    2. Paste it in your agent chat box to prompt the agent to read and follow the skill's instructions.<br>
+                    3. For MCP servers, click <strong style="color: var(--color-blue);">Copy Use</strong> to request the agent to execute tools on that connected server.
                 </div>
             </div>
 
-            <!-- Skills -->
+            <!-- Skills grid -->
             <div class="glass-panel">
                 <div class="panel-title">Active Skills</div>
                 <div class="skills-grid" id="skills-grid-container">
@@ -930,7 +1235,7 @@ module.exports = function buildSettingsHtml(data) {
                 </div>
             </div>
 
-            <!-- MCP Servers -->
+            <!-- MCP servers -->
             <div class="glass-panel">
                 <div class="panel-title">MCP Servers Configured</div>
                 <div class="mcp-list" id="mcp-list-container">
@@ -939,10 +1244,10 @@ module.exports = function buildSettingsHtml(data) {
             </div>
         </div>
 
-        <!-- CLICKER TAB -->
+        <!-- CLICKER TAB (Legacy Control Submenu) -->
         <div id="tab-clicker" class="tab-content">
-            <!-- Stats grid -->
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
+            <!-- Stats -->
+            <div class="stats-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
                 <div class="glass-panel" style="margin-bottom: 0; padding: 10px;">
                     <span style="font-size: 8px; color: var(--text-secondary); text-transform: uppercase;">Clicks Approved</span>
                     <h3 style="font-size: 18px; font-weight: 700; color: var(--color-blue);" id="stats-total-clicks">${totalClicks}</h3>
@@ -980,29 +1285,57 @@ module.exports = function buildSettingsHtml(data) {
                 </div>
             </div>
 
-            <!-- Approval Mode -->
+            <!-- Selective Permissions -->
             <div class="glass-panel">
                 <div class="panel-title">Approval Mode</div>
                 <div class="mode-selector" style="margin-bottom: 6px;">
                     <button class="mode-btn ${allowMode === 'all' ? 'active' : ''}" id="mode-all" onclick="changeAllowMode('all')">Allow All</button>
                     <button class="mode-btn ${allowMode === 'selective' ? 'active' : ''}" id="mode-selective" onclick="changeAllowMode('selective')">Selective</button>
                 </div>
+
                 <div class="selective-panel-list" id="selective-box-list" style="display: ${allowMode === 'selective' ? 'flex' : 'none'}">
                     <div class="control-row">
-                        <div class="control-info"><h4>JS Browser Policy</h4><p>Automate custom JS actions on browser</p></div>
-                        <label class="switch"><input type="checkbox" id="check-sel-browser" ${selective.browser ? 'checked' : ''} onchange="updateSelectiveState()"><span class="slider"></span></label>
+                        <div class="control-info">
+                            <h4>JS Browser Policy</h4>
+                            <p>Automate custom JS actions on browser</p>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="check-sel-browser" ${selective.browser ? 'checked' : ''} onchange="updateSelectiveState()">
+                            <span class="slider"></span>
+                        </label>
                     </div>
+
                     <div class="control-row">
-                        <div class="control-info"><h4>Terminal Auto Exec</h4><p>Runs command lines without prompt</p></div>
-                        <label class="switch"><input type="checkbox" id="check-sel-command" ${selective.command ? 'checked' : ''} onchange="updateSelectiveState()"><span class="slider"></span></label>
+                        <div class="control-info">
+                            <h4>Terminal Auto Exec</h4>
+                            <p>Runs command lines without prompt</p>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="check-sel-command" ${selective.command ? 'checked' : ''} onchange="updateSelectiveState()">
+                            <span class="slider"></span>
+                        </label>
                     </div>
+
                     <div class="control-row">
-                        <div class="control-info"><h4>File System Access</h4><p>Allows file edits outside workspace</p></div>
-                        <label class="switch"><input type="checkbox" id="check-sel-files" ${selective.files ? 'checked' : ''} onchange="updateSelectiveState()"><span class="slider"></span></label>
+                        <div class="control-info">
+                            <h4>File System Access</h4>
+                            <p>Allows files edits outside workspace</p>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="check-sel-files" ${selective.files ? 'checked' : ''} onchange="updateSelectiveState()">
+                            <span class="slider"></span>
+                        </label>
                     </div>
+
                     <div class="control-row">
-                        <div class="control-info"><h4>Planning / Artifacts</h4><p>Proceed on plans automatically</p></div>
-                        <label class="switch"><input type="checkbox" id="check-sel-planning" ${selective.planning ? 'checked' : ''} onchange="updateSelectiveState()"><span class="slider"></span></label>
+                        <div class="control-info">
+                            <h4>Planning / Artifacts</h4>
+                            <p>Proceed on plans and artifacts automatically</p>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="check-sel-planning" ${selective.planning ? 'checked' : ''} onchange="updateSelectiveState()">
+                            <span class="slider"></span>
+                        </label>
                     </div>
                 </div>
             </div>
@@ -1026,19 +1359,23 @@ module.exports = function buildSettingsHtml(data) {
                         <label>Scroll pause window <span id="label-scroll-pause">${(scrollPauseMs / 1000).toFixed(1)} s</span></label>
                         <input type="range" id="range-scroll-pause" min="1000" max="30000" step="500" value="${scrollPauseMs}" oninput="updateRangeLabel('scroll-pause', (this.value / 1000).toFixed(1) + ' s')">
                     </div>
+                    
                     <div class="form-group" style="margin-top: 6px;">
                         <label>Click Matching Patterns</label>
-                        <div class="chips-container" id="chips-container">${chipsHtml}</div>
+                        <div class="chips-container" id="chips-container">
+                            ${chipsHtml}
+                        </div>
                         <div class="add-pattern-row">
                             <input type="text" id="input-new-pattern" placeholder="e.g. Always Allow in Workspace">
                             <button class="btn-secondary" onclick="addPatternChip()">Add</button>
                         </div>
                     </div>
+
                     <button class="btn-primary" onclick="saveSettings()">Save Configuration</button>
                 </div>
             </div>
 
-            <!-- Approval Logs -->
+            <!-- Log Console -->
             <div class="glass-panel" id="panel-approval-logs">
                 <div class="panel-title collapsible-header" onclick="toggleExpand('approval-logs-body', 'approval-logs-arrow')">
                     <span class="collapsible-title-text">Approval click logs</span>
@@ -1056,6 +1393,7 @@ module.exports = function buildSettingsHtml(data) {
         </div>
     </div>
 
+    <!-- Notification Toast -->
     <div class="toast" id="toast-notify">Settings Saved!</div>
 
     <script>
@@ -1075,13 +1413,12 @@ module.exports = function buildSettingsHtml(data) {
             }
         }
 
-        // ── Tab switching — uses explicit "this" parameter, no window.event dependency ──
-        function switchTab(tabId, btn) {
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            btn.classList.add('active');
-            const tabEl = document.getElementById('tab-' + tabId);
-            if (tabEl) tabEl.classList.add('active');
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            event.currentTarget.classList.add('active');
+            document.getElementById('tab-' + tabId).classList.add('active');
         }
 
         function updateRangeLabel(id, text) {
@@ -1091,7 +1428,13 @@ module.exports = function buildSettingsHtml(data) {
         function addPatternChip() {
             const input = document.getElementById('input-new-pattern');
             const pattern = input.value.trim();
-            if (!pattern || activePatterns.includes(pattern)) { input.value = ''; return; }
+            if (!pattern) return;
+
+            if (activePatterns.includes(pattern)) {
+                input.value = '';
+                return;
+            }
+
             activePatterns.push(pattern);
             renderChips();
             input.value = '';
@@ -1116,42 +1459,51 @@ module.exports = function buildSettingsHtml(data) {
             const enabled = document.getElementById('check-enabled').checked;
             document.getElementById('stats-engine-status').innerText = enabled ? 'ACTIVE' : 'PAUSED';
             document.getElementById('stats-engine-status').style.color = enabled ? 'var(--color-green)' : 'var(--color-yellow)';
-            vscode.postMessage({ command: 'toggleAccept', enabled });
+            vscode.postMessage({ command: 'toggleAccept', enabled: enabled });
         }
 
         function toggleScroll() {
             const enabled = document.getElementById('check-scroll-enabled').checked;
-            vscode.postMessage({ command: 'toggleScroll', enabled });
+            vscode.postMessage({ command: 'toggleScroll', enabled: enabled });
         }
 
         function changeAllowMode(mode) {
             currentAllowMode = mode;
             document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
             document.getElementById('mode-' + mode).classList.add('active');
-            document.getElementById('selective-box-list').style.display = mode === 'selective' ? 'flex' : 'none';
-            vscode.postMessage({ command: 'updateAllowMode', mode });
+            
+            const list = document.getElementById('selective-box-list');
+            list.style.display = mode === 'selective' ? 'flex' : 'none';
+            
+            vscode.postMessage({ command: 'updateAllowMode', mode: mode });
         }
 
         function updateSelectiveState() {
             const permissions = {
-                browser:  document.getElementById('check-sel-browser').checked,
-                command:  document.getElementById('check-sel-command').checked,
-                files:    document.getElementById('check-sel-files').checked,
+                browser: document.getElementById('check-sel-browser').checked,
+                command: document.getElementById('check-sel-command').checked,
+                files: document.getElementById('check-sel-files').checked,
                 planning: document.getElementById('check-sel-planning').checked
             };
-            vscode.postMessage({ command: 'updateSelectivePermissions', permissions });
+            vscode.postMessage({ command: 'updateSelectivePermissions', permissions: permissions });
         }
 
         function saveSettings() {
+            const clickInterval = parseInt(document.getElementById('range-click-interval').value);
+            const scrollInterval = parseInt(document.getElementById('range-scroll-interval').value);
+            const scrollPause = parseInt(document.getElementById('range-scroll-pause').value);
+
             vscode.postMessage({
                 command: 'saveConfig',
                 data: {
-                    clickIntervalMs:  parseInt(document.getElementById('range-click-interval').value),
-                    scrollIntervalMs: parseInt(document.getElementById('range-scroll-interval').value),
-                    scrollPauseMs:    parseInt(document.getElementById('range-scroll-pause').value),
-                    clickPatterns:    activePatterns
+                    clickIntervalMs: clickInterval,
+                    scrollIntervalMs: scrollInterval,
+                    scrollPauseMs: scrollPause,
+                    clickPatterns: activePatterns
                 }
             });
+
+            // Show Toast
             const toast = document.getElementById('toast-notify');
             toast.classList.add('show');
             setTimeout(() => toast.classList.remove('show'), 2000);
@@ -1163,20 +1515,400 @@ module.exports = function buildSettingsHtml(data) {
             document.getElementById('stats-total-clicks').innerText = '0';
         }
 
-        // ── Countdown helpers ──────────────────────────────────────────────────
+        function renderCachedAccounts(cachedAccounts, activeEmail) {
+            const container = document.getElementById('account-history-body');
+            if (!container) return;
+
+            const inactiveAccounts = (cachedAccounts || []).filter(acc => acc.email !== activeEmail);
+            if (inactiveAccounts.length === 0) {
+                container.innerHTML = '<div class="empty-logs" style="padding: 10px 0; text-align: center;">No cached account history.</div>';
+                return;
+            }
+
+            const expandedStates = {};
+            inactiveAccounts.forEach((acc, index) => {
+                const id = \`acc-history-\${index}\`;
+                const body = document.getElementById(\`\${id}-body\`);
+                if (body) {
+                    expandedStates[id] = body.style.display !== 'none';
+                }
+            });
+
+            container.innerHTML = inactiveAccounts.map((acc, index) => {
+                const id = \`acc-history-\${index}\`;
+                const planClass = acc.plan && acc.plan !== 'Free' ? 'available' : 'exhausted';
+                const isExpanded = expandedStates[id] || false;
+
+                let modelsHtml = '<div class="empty-logs">No models data.</div>';
+                if (acc.modelsList && acc.modelsList.length > 0) {
+                    modelsHtml = acc.modelsList.map(m => {
+                        const hasQuota = m.quota === 1;
+                        const r = m.remainingFraction !== undefined && m.remainingFraction !== null ? m.remainingFraction : 0.0;
+                        const barColorClass = r < 0.1 ? 'bg-red' : (r < 0.25 ? 'bg-yellow' : 'bg-green');
+                        const segmentsHtml = [0,1,2,3,4].map(s => {
+                            const o = s * 0.2;
+                            const u = (s + 1) * 0.2;
+                            let d = 0;
+                            if (r >= u) {
+                                d = 100;
+                            } else if (r > o) {
+                                d = Math.round((r - o) / 0.2 * 100);
+                            }
+                            return \`
+                                <div class="quota-segment">
+                                    <div class="quota-segment-fill \${barColorClass}" style="width: \${d}%"></div>
+                                </div>
+                            \`;
+                        }).join('');
+                        const mimeStr = m.mimeTypeCount ? m.mimeTypeCount + ' types' : 'N/A';
+                        return \`
+                            <div class="model-quota-row" style="border-color: rgba(255, 255, 255, 0.03); margin-top: 4px;">
+                                <div class="model-quota-header">
+                                    <div class="model-quota-name">
+                                        <span>\${m.name}</span>
+                                    </div>
+                                    <div class="model-quota-countdown">
+                                        <span class="countdown-text">\${formatCountdown(m.expiration)}</span>
+                                    </div>
+                                </div>
+                                <div class="quota-bar-container">
+                                    \${segmentsHtml}
+                                </div>
+                                <div class="model-quota-meta" style="margin-top: 3px; font-size: 8px;">
+                                    <span class="model-quota-mime">\${mimeStr}</span>
+                                    <span class="quota-badge \${hasQuota ? 'available' : 'exhausted'}" style="padding: 1px 4px; font-size: 8px;">\${hasQuota ? 'Available' : 'Exhausted'}</span>
+                                </div>
+                            </div>
+                        \`;
+                    }).join('');
+                }
+
+                const lastSeenDate = acc.lastSeen ? new Date(acc.lastSeen).toLocaleDateString() : 'Unknown';
+
+                return \`
+                    <div class="glass-panel" style="margin-bottom: 8px; padding: 10px; border-color: rgba(168, 85, 247, 0.1); width: 100%;">
+                        <div class="collapsible-header" onclick="toggleExpand('\${id}-body', '\${id}-arrow')" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                            <div style="display: flex; flex-direction: column; gap: 2px;">
+                                <span style="font-size: 11px; font-weight: 700; font-family: monospace; color: var(--text-primary);">\${acc.email}</span>
+                                <span class="quota-badge \${planClass}" style="align-self: flex-start; padding: 1px 4px; font-size: 8px; margin-top: 1px;">\${acc.plan || 'Free'}</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <span style="font-size: 8px; color: var(--text-muted);">Last seen: \${lastSeenDate}</span>
+                                <span id="\${id}-arrow" class="collapsible-arrow" style="font-size: 8px; transition: transform 0.2s ease; display: inline-block; transform: \${isExpanded ? 'rotate(90deg)' : 'rotate(0deg)'};">▶</span>
+                            </div>
+                        </div>
+                        <div id="\${id}-body" style="display: \${isExpanded ? 'flex' : 'none'}; flex-direction: column; gap: 6px; border-top: 1px solid var(--border-color); padding-top: 8px; margin-top: 8px; width: 100%;">
+                            <div style="font-size: 9px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 2px;">Last Known Quotas</div>
+                            <div class="models-list" style="display: flex; flex-direction: column; gap: 6px; width: 100%;">
+                                \${modelsHtml}
+                            </div>
+                        </div>
+                    </div>
+                \`;
+            }).join('');
+        }
+
+        // --- Overwatch real-time UI updates ---
+        function updateOverwatchUi(data) {
+            renderCachedAccounts(data.cachedAccounts, data.email);
+            if (!data.sessionActive) {
+                document.getElementById('radar-active-status').innerText = 'OFFLINE';
+                document.getElementById('radar-active-badge').classList.add('inactive');
+                return;
+            }
+
+            // Status & Model
+            document.getElementById('radar-model').innerText = data.activeModel;
+            document.getElementById('radar-session-id').innerText = 'ID: ' + data.sessionId.substring(0, 15) + '...';
+            document.getElementById('radar-active-status').innerText = 'ACTIVE';
+            document.getElementById('radar-active-badge').classList.remove('inactive');
+
+            // Account & Plan Info
+            const emailEl = document.getElementById('sentinel-email');
+            if (emailEl) emailEl.innerText = data.email || 'offline';
+            const planEl = document.getElementById('sentinel-plan');
+            if (planEl) {
+                planEl.innerText = data.plan || 'Free';
+                planEl.className = 'quota-badge ' + (data.plan && data.plan !== 'Free' ? 'available' : 'exhausted');
+            }
+
+            // Update active quota value
+            const quotaValEl = document.getElementById('radar-active-quota-val');
+            if (quotaValEl) {
+                const actPct = Math.round((data.activeModelRemainingFraction || 0.0) * 100);
+                quotaValEl.innerText = actPct + '%';
+                if (actPct < 10) {
+                    quotaValEl.style.color = 'var(--color-red)';
+                } else if (actPct < 25) {
+                    quotaValEl.style.color = 'var(--color-yellow)';
+                } else {
+                    quotaValEl.style.color = 'var(--color-green)';
+                }
+            }
+
+            // Reset timer
+            if (data.activeModelExpiration) {
+                window.__overwatchExpiration = data.activeModelExpiration;
+                updateResetTimer();
+            } else {
+                const timerEl = document.getElementById('radar-reset-value');
+                if (timerEl) {
+                    timerEl.innerText = 'N/A';
+                    timerEl.className = 'reset-timer-value green';
+                }
+            }
+
+            // Models List with strict flat sorting, quota badges, countdown
+            const modelsList = document.getElementById('radar-models-list');
+            if (modelsList) {
+                if (data.modelsList && data.modelsList.length > 0) {
+                    // Store models data for countdown ticking
+                    window.__overwatchModels = data.modelsList;
+                    window.__overwatchActiveModel = data.activeModel;
+
+                    const order = [
+                        'Gemini 3.5 Flash (Low)',
+                        'Gemini 3.5 Flash (Medium)',
+                        'Gemini 3.5 Flash (High)',
+                        'Gemini 3.1 Pro (Low)',
+                        'Gemini 3.1 Pro (High)',
+                        'Claude Sonnet 4.6 (Thinking)',
+                        'Claude Opus 4.6 (Thinking)',
+                        'GPT-OSS 120B (Medium)'
+                    ];
+                    
+                    const sortedModels = [...data.modelsList].sort((a, b) => {
+                        const indexA = order.indexOf(a.name);
+                        const indexB = order.indexOf(b.name);
+                        const valA = indexA === -1 ? 999 : indexA;
+                        const valB = indexB === -1 ? 999 : indexB;
+                        return valA - valB;
+                    });
+
+                    let html = sortedModels.map(m => {
+                        const isActive = m.name === data.activeModel;
+                        const hasQuota = m.quota === 1;
+                        const countdownStr = formatCountdown(m.expiration);
+                        const r = m.remainingFraction !== undefined && m.remainingFraction !== null ? m.remainingFraction : 0.0;
+                        const barColorClass = r < 0.1 ? 'bg-red' : (r < 0.25 ? 'bg-yellow' : 'bg-green');
+                        const segmentsHtml = [0,1,2,3,4].map(s => {
+                            const o = s * 0.2;
+                            const u = (s + 1) * 0.2;
+                            let d = 0;
+                            if (r >= u) {
+                                d = 100;
+                            } else if (r > o) {
+                                d = Math.round((r - o) / 0.2 * 100);
+                            }
+                            return \`
+                                <div class="quota-segment">
+                                    <div class="quota-segment-fill \${barColorClass}" style="width: \${d}%"></div>
+                                </div>
+                            \`;
+                        }).join('');
+                        const mimeStr = m.mimeTypeCount ? m.mimeTypeCount + ' types' : 'N/A';
+                        return \`
+                            <div class="model-quota-row \${isActive ? 'active' : ''}" data-model-name="\${m.name}" data-expiration="\${m.expiration || ''}">
+                                <div class="model-quota-header">
+                                    <div class="model-quota-name">
+                                        \${isActive ? '<span class="model-quota-active-indicator"></span>' : ''}
+                                        <span>\${m.name}</span>
+                                    </div>
+                                    <div class="model-quota-countdown" data-exp="\${m.expiration || ''}">
+                                        <span class="countdown-text">\${countdownStr}</span>
+                                    </div>
+                                </div>
+                                <div class="quota-bar-container">
+                                    \${segmentsHtml}
+                                </div>
+                                <div class="model-quota-meta" style="margin-top: 3px; font-size: 8px;">
+                                    <span class="model-quota-mime">\${mimeStr}</span>
+                                    <span class="quota-badge \${hasQuota ? 'available' : 'exhausted'}" style="padding: 1px 4px; font-size: 8px;">\${hasQuota ? 'Available' : 'Exhausted'}</span>
+                                </div>
+                            </div>
+                        \`;
+                    }).join('');
+                    
+                    modelsList.innerHTML = html;
+                } else {
+                    modelsList.innerHTML = '<div class="empty-logs">No models data found in global state.</div>';
+                }
+            }
+
+            // Token & Capacity gauge
+            const percent = Math.min(Math.round((data.estimatedTokens / data.contextLimit) * 100), 100);
+            document.getElementById('radar-token-percent').innerText = percent + '%';
+            
+            const fill = document.getElementById('radar-token-fill');
+            fill.style.width = percent + '%';
+            fill.className = 'progress-bar-fill';
+            
+            let statusText = 'Normal';
+            if (percent >= 90) {
+                fill.classList.add('danger');
+                statusText = 'CRITICAL LIMIT';
+            } else if (percent >= 75) {
+                fill.classList.add('warning');
+                statusText = 'Compacting Near';
+            }
+            
+            document.getElementById('radar-compaction-status').innerText = statusText;
+            document.getElementById('radar-compaction-status').style.color = 
+                statusText === 'CRITICAL LIMIT' ? 'var(--color-red)' : 
+                (statusText === 'Compacting Near' ? 'var(--color-yellow)' : 'var(--text-secondary)');
+            
+            const formatNumber = num => num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+            document.getElementById('radar-token-value').innerText = formatNumber(data.estimatedTokens) + ' / ' + formatNumber(data.contextLimit) + ' Tokens';
+
+
+            // Skills tab list
+            const skillsContainer = document.getElementById('skills-grid-container');
+            if (data.skills && data.skills.length > 0) {
+                skillsContainer.innerHTML = data.skills.map(skill => \`
+                    <div class="skill-item" style="border: 1px solid var(--border-color); border-radius: 6px; padding: 10px; display: flex; flex-direction: column; justify-content: space-between; gap: 8px; background: rgba(255,255,255,0.01);">
+                        <div>
+                            <h4 style="margin: 0; font-size: 11.5px; color: var(--text-primary); font-weight: 700;">\${skill.name}</h4>
+                            <p style="margin: 4px 0 0 0; font-size: 9px; color: var(--text-secondary); line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;">\${skill.description || 'No description available.'}</p>
+                        </div>
+                        <button class="mode-btn" onclick="copyPrompt('skill', '\${skill.name}', event)" style="align-self: flex-start; padding: 3px 8px; font-size: 9px; font-weight: 700; height: auto; margin: 0; background: var(--bg-sidebar); border: 1px solid var(--border-color); color: var(--color-rose); cursor: pointer; border-radius: 4px; display: flex; align-items: center; gap: 4px;">
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                            Copy Prompt
+                        </button>
+                    </div>
+                \`).join('');
+            } else {
+                skillsContainer.innerHTML = '<div class="empty-logs">No active skills folder detected.</div>';
+            }
+
+            // MCP tab list
+            const mcpContainer = document.getElementById('mcp-list-container');
+            if (data.mcpServers && data.mcpServers.length > 0) {
+                mcpContainer.innerHTML = data.mcpServers.map(mcp => \`
+                    <div class="mcp-item" style="border: 1px solid var(--border-color); border-radius: 6px; padding: 10px; display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.01); margin-bottom: 8px;">
+                        <div>
+                            <div class="mcp-item-name" style="font-weight: 700; font-size: 11px; color: var(--text-primary);">\${mcp.name}</div>
+                            <div class="mcp-item-cmd" style="font-size: 8px; color: var(--text-muted); font-family: monospace; margin-top: 2px;">Command: \${mcp.command}</div>
+                        </div>
+                        <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
+                            <span style="font-size: 8.5px; font-weight: bold; color: var(--color-green); display: flex; align-items: center; gap: 4px;">
+                                <span class="pulse-dot" style="width: 5px; height: 5px; background: var(--color-green);"></span> \${mcp.status}
+                            </span>
+                            <button class="mode-btn" onclick="copyPrompt('mcp', '\${mcp.name}', event)" style="padding: 2px 6px; font-size: 8.5px; font-weight: 700; height: auto; margin: 0; background: var(--bg-sidebar); border: 1px solid var(--border-color); color: var(--color-blue); cursor: pointer; border-radius: 4px; display: flex; align-items: center; gap: 3px;">
+                                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                Copy Use
+                            </button>
+                        </div>
+                    </div>
+                \`).join('');
+            } else {
+                mcpContainer.innerHTML = '<div class="empty-logs">No custom MCP servers configured in mcp_config.json.</div>';
+            }
+        }
+
+        // Frame viewer logic
+        function openFrameViewer(uri) {
+            vscode.postMessage({ command: 'openSettings' }); // Fallback or focuses panel
+        }
+
+        // Clipboard Copy Utility
+        function copyPrompt(type, name, event) {
+            let promptText = '';
+            if (type === 'skill') {
+                promptText = 'Please use the skill \`' + name + '\`. Read its SKILL.md file and follow its instructions exactly to proceed.';
+            } else if (type === 'mcp') {
+                promptText = 'Please run the tool using the connected \`' + name + '\` MCP server.';
+            }
+            
+            vscode.postMessage({ command: 'copyToClipboard', text: promptText });
+            const btn = event.currentTarget;
+            const origHtml = btn.innerHTML;
+            const origColor = btn.style.color;
+            const origBorderColor = btn.style.borderColor;
+            btn.innerHTML = \`<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> Copied!\`;
+            btn.style.color = 'var(--color-green)';
+            btn.style.borderColor = 'var(--color-green)';
+            setTimeout(() => {
+                btn.innerHTML = origHtml;
+                btn.style.color = origColor;
+                btn.style.borderColor = origBorderColor;
+            }, 1500);
+        }
+
+        // Live messages syncing
+        window.addEventListener('message', event => {
+            const message = event.data;
+            if (message.command === 'updateOverwatch') {
+                updateOverwatchUi(message.data);
+            } else if (message.command === 'updateState') {
+                // Sync settings state
+                document.getElementById('check-enabled').checked = message.state.enabled;
+                document.getElementById('check-scroll-enabled').checked = message.state.scrollEnabled;
+                document.getElementById('range-click-interval').value = message.state.clickIntervalMs || 1000;
+                document.getElementById('range-scroll-interval').value = message.state.scrollIntervalMs || 500;
+                document.getElementById('range-scroll-pause').value = message.state.scrollPauseMs || 7000;
+                
+                updateRangeLabel('click-interval', (message.state.clickIntervalMs || 1000) + ' ms');
+                updateRangeLabel('scroll-interval', (message.state.scrollIntervalMs || 500) + ' ms');
+                updateRangeLabel('scroll-pause', ((message.state.scrollPauseMs || 7000) / 1000).toFixed(1) + ' s');
+
+                activePatterns = message.state.clickPatterns || [];
+                renderChips();
+
+                const isEnabled = message.state.enabled !== false;
+                document.getElementById('stats-engine-status').innerText = isEnabled ? 'ACTIVE' : 'PAUSED';
+                document.getElementById('stats-engine-status').style.color = isEnabled ? 'var(--color-green)' : 'var(--color-yellow)';
+                document.getElementById('stats-total-clicks').innerText = message.state.totalClicks || 0;
+
+                // Sync selective mode
+                currentAllowMode = message.state.allowMode || 'all';
+                document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+                document.getElementById('mode-' + currentAllowMode).classList.add('active');
+                document.getElementById('selective-box-list').style.display = currentAllowMode === 'selective' ? 'flex' : 'none';
+
+                const selective = message.state.selectivePermissions || { browser: true, command: true, files: true, planning: true };
+                document.getElementById('check-sel-browser').checked = selective.browser;
+                document.getElementById('check-sel-command').checked = selective.command;
+                document.getElementById('check-sel-files').checked = selective.files;
+                document.getElementById('check-sel-planning').checked = selective.planning;
+
+                // Render click log console
+                const logContainer = document.getElementById('console-logs');
+                if (message.state.clickLog && message.state.clickLog.length > 0) {
+                    logContainer.innerHTML = message.state.clickLog.map(log => \`
+                        <div class="log-item">
+                            <span class="log-time">[\${log.time || ''}]</span>
+                            <span class="log-bullet">
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            </span>
+                            <span class="log-text">Clicked <strong class="highlight-btn">\${log.button || ''}</strong> (<span class="highlight-pat">"\${log.pattern || ''}"</span>)</span>
+                        </div>
+                    \`).join('');
+                } else {
+                    logContainer.innerHTML = '<div class="empty-logs">No click events logged yet.</div>';
+                }
+            }
+        });
+
+        // --- Countdown helper functions ---
         function formatCountdown(expiration, noPrefix = false) {
             if (!expiration) return 'N/A';
             const now = Math.floor(Date.now() / 1000);
             const diff = expiration - now;
             if (diff <= 0) return 'Quota Available';
+            
             const r = Math.floor(diff / 60);
             const n = Math.floor(r / 1440);
             const a = Math.floor((r % 1440) / 60);
             const i = r % 60;
+            
             let timeStr = '';
-            if (n > 0) timeStr = \`\${n} day\${n > 1 ? 's' : ''}, \${a} hour\${a > 1 ? 's' : ''}\`;
-            else if (a > 0) timeStr = \`\${a} hour\${a > 1 ? 's' : ''}, \${i} minute\${i > 1 ? 's' : ''}\`;
-            else timeStr = \`\${i} minute\${i > 1 ? 's' : ''}\`;
+            if (n > 0) {
+                timeStr = \`\${n} day\${n > 1 ? 's' : ''}, \${a} hour\${a > 1 ? 's' : ''}\`;
+            } else if (a > 0) {
+                timeStr = \`\${a} hour\${a > 1 ? 's' : ''}, \${i} minute\${i > 1 ? 's' : ''}\`;
+            } else {
+                timeStr = \`\${i} minute\${i > 1 ? 's' : ''}\`;
+            }
             return noPrefix ? timeStr : \`Refreshes in \${timeStr}\`;
         }
 
@@ -1195,13 +1927,18 @@ module.exports = function buildSettingsHtml(data) {
             const exp = window.__overwatchExpiration;
             const timerEl = document.getElementById('radar-reset-value');
             if (!timerEl || !exp) return;
-            timerEl.innerText = formatCountdown(exp, true);
-            timerEl.className = 'reset-timer-value ' + getCountdownColor(exp);
+            const str = formatCountdown(exp, true);
+            const color = getCountdownColor(exp);
+            timerEl.innerText = str;
+            timerEl.className = 'reset-timer-value ' + color;
         }
 
-        // Tick every second
+        // Tick countdown every second
         setInterval(() => {
+            // Update header countdown
             updateResetTimer();
+
+            // Update per-model countdowns in the list
             document.querySelectorAll('.model-quota-countdown[data-exp]').forEach(el => {
                 const exp = parseInt(el.getAttribute('data-exp'));
                 if (!exp) return;
@@ -1210,346 +1947,12 @@ module.exports = function buildSettingsHtml(data) {
             });
         }, 1000);
 
-        // ── Skills renderer ───────────────────────────────────────────────────
-        function renderSkills(skills) {
-            const container = document.getElementById('skills-grid-container');
-            if (!skills || skills.length === 0) {
-                container.innerHTML = '<div class="empty-logs">No active skills folder detected.</div>';
-                return;
-            }
-            container.innerHTML = skills.map(skill => \`
-                <div class="skill-card">
-                    <div class="skill-card-top">
-                        <div class="skill-name">\${skill.name}</div>
-                        <div class="skill-desc">\${skill.description || 'No description available.'}</div>
-                    </div>
-                    <div class="skill-footer">
-                        <button class="btn-copy" data-name='\${skill.name}' onclick="copySkillPrompt(this)">
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            Copy Prompt
-                        </button>
-                    </div>
-                </div>
-            \`).join('');
-        }
-
-        // ── MCP renderer ──────────────────────────────────────────────────────
-        function renderMcp(mcpServers) {
-            const container = document.getElementById('mcp-list-container');
-            if (!mcpServers || mcpServers.length === 0) {
-                container.innerHTML = '<div class="empty-logs">No custom MCP servers configured in mcp_config.json.</div>';
-                return;
-            }
-            container.innerHTML = mcpServers.map(mcp => \`
-                <div class="mcp-item">
-                    <div>
-                        <div class="mcp-item-name">\${mcp.name}</div>
-                        <div class="mcp-item-cmd">Command: \${mcp.command}</div>
-                    </div>
-                    <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 6px;">
-                        <span style="font-size: 8.5px; font-weight: bold; color: var(--color-green); display: flex; align-items: center; gap: 4px;">
-                            <span class="pulse-dot" style="width: 5px; height: 5px; background: var(--color-green);"></span> \${mcp.status}
-                        </span>
-                        <button class="btn-copy mcp" data-name='\${mcp.name}' onclick="copyMcpPrompt(this)">
-                            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                            Copy Use
-                        </button>
-                    </div>
-                </div>
-            \`).join('');
-        }
-
-        // ── Clipboard copy ─────────────────────────────────────────────────────
-        // navigator.clipboard is NOT reliable in VSCode webview sandbox.
-        // Use vscode.postMessage → vscode.env.clipboard.writeText() in extension.
-        function sendCopyToClipboard(text, btn) {
-            vscode.postMessage({ command: 'copyToClipboard', text });
-            const origHtml = btn.innerHTML;
-            const origColor = btn.style.color;
-            const origBorder = btn.style.borderColor;
-            btn.innerHTML = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>\u00a0Copied!';
-            btn.style.color = 'var(--color-green)';
-            btn.style.borderColor = 'var(--color-green)';
-            setTimeout(function() {
-                btn.innerHTML = origHtml;
-                btn.style.color = origColor;
-                btn.style.borderColor = origBorder;
-            }, 1500);
-        }
-
-        function copySkillPrompt(btn) {
-            var name = btn.dataset.name;
-            var text = '\u26A1 ACTIVATE SKILL: \`' + name + '\`\n\n'
-                + 'Instructions:\n'
-                + '1. Find and read the SKILL.md file for skill \`' + name + '\` in the skills directory (~/.gemini/config/skills/)\n'
-                + '2. Read ALL instructions in that file completely \u2014 do not skim\n'
-                + '3. Follow them EXACTLY \u2014 no improvising, no summarizing, no skipping steps\n'
-                + '4. Apply this skill to the current task now';
-            sendCopyToClipboard(text, btn);
-        }
-
-        function copyMcpPrompt(btn) {
-            var name = btn.dataset.name;
-            var text = 'Use the connected MCP server: \`' + name + '\`\nCall the appropriate tool on this server to fulfill the current task.';
-            sendCopyToClipboard(text, btn);
-        }
-
-        // ── Account history re-render ─────────────────────────────────────────
-        function renderCachedAccounts(cachedAccounts, activeEmail) {
-            const container = document.getElementById('account-history-body');
-            if (!container) return;
-
-            const inactiveAccounts = (cachedAccounts || []).filter(acc => acc.email !== activeEmail);
-            if (inactiveAccounts.length === 0) {
-                container.innerHTML = '<div class="empty-logs" style="padding: 10px 0; text-align: center;">No cached account history.</div>';
-                return;
-            }
-
-            // Preserve expand states
-            const expandedStates = {};
-            inactiveAccounts.forEach((acc, index) => {
-                const body = document.getElementById(\`acc-history-\${index}-body\`);
-                if (body) expandedStates[index] = body.style.display !== 'none';
-            });
-
-            container.innerHTML = inactiveAccounts.map((acc, index) => {
-                const id = \`acc-history-\${index}\`;
-                const planClass = acc.plan && acc.plan !== 'Free' ? 'available' : 'exhausted';
-                const isExpanded = expandedStates[index] || false;
-                const lastSeenDate = acc.lastSeen ? new Date(acc.lastSeen).toLocaleDateString() : 'Unknown';
-
-                let modelsHtml = '<div class="empty-logs">No models data.</div>';
-                if (acc.modelsList && acc.modelsList.length > 0) {
-                    modelsHtml = acc.modelsList.map(m => {
-                        const hasQuota = m.quota === 1;
-                        const r = m.remainingFraction !== undefined ? m.remainingFraction : 0.0;
-                        const barColorClass = r < 0.1 ? 'bg-red' : (r < 0.25 ? 'bg-yellow' : 'bg-green');
-                        const segmentsHtml = [0,1,2,3,4].map(s => {
-                            const o = s * 0.2, u = (s + 1) * 0.2;
-                            let d = 0;
-                            if (r >= u) d = 100;
-                            else if (r > o) d = Math.round((r - o) / 0.2 * 100);
-                            return \`<div class="quota-segment"><div class="quota-segment-fill \${barColorClass}" style="width:\${d}%"></div></div>\`;
-                        }).join('');
-                        return \`
-                            <div class="model-quota-row">
-                                <div class="model-quota-header">
-                                    <div class="model-quota-name"><span>\${m.name}</span></div>
-                                    <span class="countdown-text" style="font-size:9px;color:var(--text-secondary);">\${formatCountdown(m.expiration)}</span>
-                                </div>
-                                <div class="quota-bar-container">\${segmentsHtml}</div>
-                                <div class="model-quota-meta">
-                                    <span class="model-quota-mime">\${m.mimeTypeCount ? m.mimeTypeCount + ' types' : 'N/A'}</span>
-                                    <span class="quota-badge \${hasQuota ? 'available' : 'exhausted'}">\${hasQuota ? 'Available' : 'Exhausted'}</span>
-                                </div>
-                            </div>
-                        \`;
-                    }).join('');
-                }
-
-                return \`
-                    <div class="glass-panel" style="margin-bottom: 8px; padding: 10px; border-color: rgba(168,85,247,0.1); width: 100%;">
-                        <div class="collapsible-header" onclick="toggleExpand('\${id}-body', '\${id}-arrow')" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-                            <div style="display: flex; flex-direction: column; gap: 2px;">
-                                <span style="font-size: 11px; font-weight: 700; font-family: monospace; color: var(--text-primary);">\${acc.email}</span>
-                                <span class="quota-badge \${planClass}" style="align-self: flex-start; padding: 1px 4px; font-size: 8px; margin-top: 1px;">\${acc.plan || 'Free'}</span>
-                            </div>
-                            <div style="display: flex; align-items: center; gap: 6px;">
-                                <span style="font-size: 8px; color: var(--text-muted);">Last seen: \${lastSeenDate}</span>
-                                <span id="\${id}-arrow" class="collapsible-arrow" style="font-size: 8px; transition: transform 0.2s ease; display: inline-block; transform: \${isExpanded ? 'rotate(90deg)' : 'rotate(0deg)'};">▶</span>
-                            </div>
-                        </div>
-                        <div id="\${id}-body" style="display: \${isExpanded ? 'flex' : 'none'}; flex-direction: column; gap: 6px; border-top: 1px solid var(--border-color); padding-top: 8px; margin-top: 8px; width: 100%;">
-                            <div style="font-size: 9px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 2px;">Last Known Quotas</div>
-                            <div style="display: flex; flex-direction: column; gap: 6px;">\${modelsHtml}</div>
-                        </div>
-                    </div>
-                \`;
-            }).join('');
-        }
-
-        // ── Main update function (called on 5 s poll) ─────────────────────────
-        function updateOverwatchUi(data) {
-            renderCachedAccounts(data.cachedAccounts, data.email);
-
-            const _statusEl = document.getElementById('radar-active-status');
-            const _badgeEl  = document.getElementById('radar-active-badge');
-            if (!data.sessionActive) {
-                if (_statusEl) _statusEl.innerText = 'OFFLINE';
-                if (_badgeEl)  _badgeEl.classList.add('inactive');
-                return;
-            }
-
-            // Session info
-            const _sidEl = document.getElementById('radar-session-id');
-            if (_sidEl) _sidEl.innerText = 'ID: ' + (data.sessionId ? data.sessionId.substring(0, 20) + '...' : 'N/A');
-            if (_statusEl) _statusEl.innerText = 'ACTIVE';
-            if (_badgeEl)  _badgeEl.classList.remove('inactive');
-
-            // Active model — null means "Detecting..."
-            const modelEl = document.getElementById('radar-model');
-            if (data.activeModel) {
-                modelEl.innerHTML = data.activeModel;
-                modelEl.style.fontStyle = 'normal';
-                modelEl.style.color = '';
-            } else {
-                modelEl.innerHTML = '<span class="detecting-text">Detecting...</span>';
-            }
-
-            // Account & Plan
-            const emailEl = document.getElementById('sentinel-email');
-            if (emailEl) emailEl.innerText = data.email || 'offline';
-            const planEl = document.getElementById('sentinel-plan');
-            if (planEl) {
-                planEl.innerText = data.plan || 'Free';
-                planEl.className = 'quota-badge ' + (data.plan && data.plan !== 'Free' ? 'available' : 'exhausted');
-            }
-
-            // Quota
-            const quotaValEl = document.getElementById('radar-active-quota-val');
-            if (quotaValEl) {
-                const actPct = Math.round((data.activeModelRemainingFraction || 0.0) * 100);
-                quotaValEl.innerText = actPct + '%';
-                quotaValEl.style.color = actPct < 10 ? 'var(--color-red)' : (actPct < 25 ? 'var(--color-yellow)' : 'var(--color-green)');
-            }
-
-            // Reset timer
-            if (data.activeModelExpiration) {
-                window.__overwatchExpiration = data.activeModelExpiration;
-                updateResetTimer();
-            } else {
-                const timerEl = document.getElementById('radar-reset-value');
-                if (timerEl) { timerEl.innerText = 'N/A'; timerEl.className = 'reset-timer-value green'; }
-            }
-
-            // Model quota list
-            const modelsList = document.getElementById('radar-models-list');
-            if (modelsList) {
-                if (data.modelsList && data.modelsList.length > 0) {
-                    window.__overwatchModels = data.modelsList;
-                    window.__overwatchActiveModel = data.activeModel;
-                    const order = [
-                        'Gemini 3.5 Flash (Low)', 'Gemini 3.5 Flash (Medium)', 'Gemini 3.5 Flash (High)',
-                        'Gemini 3.1 Pro (Low)', 'Gemini 3.1 Pro (High)',
-                        'Claude Sonnet 4.6 (Thinking)', 'Claude Opus 4.6 (Thinking)', 'GPT-OSS 120B (Medium)'
-                    ];
-                    const sortedModels = [...data.modelsList].sort((a, b) => {
-                        // Active model always first
-                        if (a.name === data.activeModel) return -1;
-                        if (b.name === data.activeModel) return 1;
-                        const ia = order.indexOf(a.name); const ib = order.indexOf(b.name);
-                        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
-                    });
-
-                    modelsList.innerHTML = sortedModels.map(m => {
-                        const isActive = m.name === data.activeModel;
-                        const hasQuota = m.quota === 1;
-                        const r = m.remainingFraction !== undefined ? m.remainingFraction : 0.0;
-                        const barColorClass = r < 0.1 ? 'bg-red' : (r < 0.25 ? 'bg-yellow' : 'bg-green');
-                        const segmentsHtml = [0,1,2,3,4].map(s => {
-                            const o = s * 0.2, u = (s + 1) * 0.2;
-                            let d = 0;
-                            if (r >= u) d = 100;
-                            else if (r > o) d = Math.round((r - o) / 0.2 * 100);
-                            return \`<div class="quota-segment"><div class="quota-segment-fill \${barColorClass}" style="width:\${d}%"></div></div>\`;
-                        }).join('');
-                        return \`
-                            <div class="model-quota-row \${isActive ? 'active' : ''}" data-model-name="\${m.name}" data-expiration="\${m.expiration || ''}">
-                                <div class="model-quota-header">
-                                    <div class="model-quota-name">
-                                        \${isActive ? '<span class="model-quota-active-indicator"></span>' : ''}
-                                        <span>\${m.name}</span>
-                                    </div>
-                                    <div class="model-quota-countdown" data-exp="\${m.expiration || ''}">
-                                        <span class="countdown-text">\${formatCountdown(m.expiration)}</span>
-                                    </div>
-                                </div>
-                                <div class="quota-bar-container">\${segmentsHtml}</div>
-                                <div class="model-quota-meta">
-                                    <span class="model-quota-mime">\${m.mimeTypeCount ? m.mimeTypeCount + ' types' : 'N/A'}</span>
-                                    <span class="quota-badge \${hasQuota ? 'available' : 'exhausted'}">\${hasQuota ? 'Available' : 'Exhausted'}</span>
-                                </div>
-                            </div>
-                        \`;
-                    }).join('');
-                } else {
-                    modelsList.innerHTML = '<div class="empty-logs">No models data found.</div>';
-                }
-            }
-
-            // Context window gauge
-            const _pct  = Math.min(Math.round((data.estimatedTokens / (data.contextLimit || 1)) * 100), 100);
-            const _pctEl = document.getElementById('radar-token-percent');
-            const _fill  = document.getElementById('radar-token-fill');
-            const _compEl = document.getElementById('radar-compaction-status');
-            const _tokEl  = document.getElementById('radar-token-value');
-            if (_pctEl) _pctEl.innerText = _pct + '%';
-            if (_fill) {
-                _fill.style.width = _pct + '%';
-                _fill.className = 'progress-bar-fill';
-                if (_pct >= 90) { _fill.classList.add('danger'); }
-                else if (_pct >= 75) { _fill.classList.add('warning'); }
-            }
-            const _statusTxt = _pct >= 90 ? 'CRITICAL LIMIT' : (_pct >= 75 ? 'Compacting Near' : 'Normal');
-            if (_compEl) {
-                _compEl.innerText = _statusTxt;
-                _compEl.style.color = _statusTxt === 'CRITICAL LIMIT' ? 'var(--color-red)' : (_statusTxt === 'Compacting Near' ? 'var(--color-yellow)' : 'var(--text-secondary)');
-            }
-            const _fmt = n => n.toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ',');
-            if (_tokEl) _tokEl.innerText = _fmt(data.estimatedTokens) + ' / ' + _fmt(data.contextLimit) + ' Tokens';
-
-            // Skills & MCP
-            renderSkills(data.skills);
-            renderMcp(data.mcpServers);
-        }
-
-        // ── Message handler ───────────────────────────────────────────────────
-        window.addEventListener('message', event => {
-            const message = event.data;
-            if (message.command === 'updateOverwatch') {
-                try { updateOverwatchUi(message.data); } catch(e) { console.error('[Sentinel] updateOverwatchUi error:', e); }
-            } else if (message.command === 'updateState') {
-                const s = message.state;
-                document.getElementById('check-enabled').checked = s.enabled;
-                document.getElementById('check-scroll-enabled').checked = s.scrollEnabled;
-                document.getElementById('range-click-interval').value = s.clickIntervalMs || 1000;
-                document.getElementById('range-scroll-interval').value = s.scrollIntervalMs || 500;
-                document.getElementById('range-scroll-pause').value = s.scrollPauseMs || 7000;
-                updateRangeLabel('click-interval', (s.clickIntervalMs || 1000) + ' ms');
-                updateRangeLabel('scroll-interval', (s.scrollIntervalMs || 500) + ' ms');
-                updateRangeLabel('scroll-pause', ((s.scrollPauseMs || 7000) / 1000).toFixed(1) + ' s');
-                activePatterns = s.clickPatterns || [];
-                renderChips();
-                const en = s.enabled !== false;
-                document.getElementById('stats-engine-status').innerText = en ? 'ACTIVE' : 'PAUSED';
-                document.getElementById('stats-engine-status').style.color = en ? 'var(--color-green)' : 'var(--color-yellow)';
-                document.getElementById('stats-total-clicks').innerText = s.totalClicks || 0;
-                currentAllowMode = s.allowMode || 'all';
-                document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
-                document.getElementById('mode-' + currentAllowMode).classList.add('active');
-                document.getElementById('selective-box-list').style.display = currentAllowMode === 'selective' ? 'flex' : 'none';
-                const sel = s.selectivePermissions || { browser: true, command: true, files: true, planning: true };
-                document.getElementById('check-sel-browser').checked = sel.browser;
-                document.getElementById('check-sel-command').checked = sel.command;
-                document.getElementById('check-sel-files').checked = sel.files;
-                document.getElementById('check-sel-planning').checked = sel.planning;
-                const logContainer = document.getElementById('console-logs');
-                if (s.clickLog && s.clickLog.length > 0) {
-                    logContainer.innerHTML = s.clickLog.map(log => \`
-                        <div class="log-item">
-                            <span class="log-time">[\${log.time || ''}]</span>
-                            <span class="log-bullet"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></span>
-                            <span class="log-text">Clicked <strong class="highlight-btn">\${log.button || ''}</strong> (<span class="highlight-pat">"\${log.pattern || ''}"</span>)</span>
-                        </div>
-                    \`).join('');
-                } else {
-                    logContainer.innerHTML = '<div class="empty-logs">No click events logged yet.</div>';
-                }
-            }
-        });
-
-        // Bootstrap
-        try { updateOverwatchUi(${JSON.stringify(overwatch).replace(/</g, '\\u003c')}); } catch(e) { console.error('[Sentinel] bootstrap error:', e); }
+        // Initialize UI with bootstrap data
+        const bootstrapState = ${JSON.stringify({ enabled: isEnabled, scrollEnabled: isScrollEnabled, clickIntervalMs, scrollIntervalMs, scrollPauseMs, clickPatterns, totalClicks, allowMode, selectivePermissions: selective })};
+        const bootstrapOverwatch = ${JSON.stringify(overwatch)};
+        
+        // Run bootstrap update
+        updateOverwatchUi(bootstrapOverwatch);
     </script>
 </body>
 </html>`;

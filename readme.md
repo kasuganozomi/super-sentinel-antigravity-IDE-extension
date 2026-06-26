@@ -1,7 +1,7 @@
 # Antigravity Super Sentinel
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.3.0-purple.svg?style=for-the-badge&logo=visual-studio-code" alt="Version" />
+  <img src="https://img.shields.io/badge/version-2.5.0-purple.svg?style=for-the-badge&logo=visual-studio-code" alt="Version" />
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20WSL-blue.svg?style=for-the-badge" alt="Platform" />
   <img src="https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge" alt="License" />
   <img src="https://img.shields.io/badge/Built%20For-Antigravity%20IDE-orange.svg?style=for-the-badge" alt="Built For" />
@@ -11,180 +11,92 @@
 
 ## 🔮 Overview
 
-**Antigravity Super Sentinel** is an ultra-premium agent dashboard utility designed specifically for the **Google Antigravity IDE**. Engineered to deliver a highly precise, luxurious developer dashboard and bypass validation bottlenecks, this extension provides direct telemetry metrics, auto-approval configurations, and seamless workflow automation.
+**Antigravity Super Sentinel** is a precision agent dashboard and automation utility built specifically for the **Google Antigravity IDE**. It delivers a real-time telemetry sidebar, smart auto-approval workflows, and a zero-lag status bar — all without interrupting your agent session.
+
+Engineered for **lean performance**: no stuttering, no IDE lag, no heavy background operations.
 
 ---
 
 ## ✨ Features
 
-*   **⚡ Zero-Lag Live Quota Telemetry**: Direct memory scanning of local Go Language Server (LSP) telemetry data (active models list, remaining quotas, and reset times).
-*   **🤖 Auto-Approvals (Smart Clicker)**: Automatic prompt bypass injection directly into the IDE's main workbench window, avoiding confirmation delays.
-*   **📊 Multi-Account Analytics Dashboard**: Premium sidebar showing session stats, token usage progress gauges, and detailed model quotas.
-*   **🎨 Vibrant Status Bar Indicator**: Unified bottom-left status bar pill displaying active/paused state, active model, remaining quota percentage, and the countdown until reset.
+*   **⚡ Live Status Bar**: A bottom-left indicator showing the active model name, remaining quota percentage, and a countdown to reset — updated in real-time via transcript analysis. No SQLite, no heavy polling.
+*   **🤖 Smart Auto-Clicker**: Automatic approval bypass injection into the IDE's workbench, with configurable click patterns, intervals, and selective permission modes (All / Selective / Paused).
+*   **📊 Session Radar Dashboard**: Premium sidebar with:
+    *   Active session status, session ID, and active model (live)
+    *   Context window usage gauge with compaction warnings
+    *   Full model quota list with remaining fraction bars and reset timers
+    *   Account plan info and multi-account history cache
+*   **🧠 Skills & MCP Inspector**: Browse all active skills and MCP servers. One-click copy of the skill activation prompt (backtick format) with a visual "Copied!" confirmation.
+*   **🎛️ Clicker Config Panel**: Full control over click patterns, scroll behavior, intervals, and per-tool permission grants.
 
 ---
 
-## 💻 Supported Environments
+## 🚀 Installation
 
-| Platform | Extension Host OS | Client UI OS | Auto-Clicker Injection Target | Required Setup |
-| :--- | :--- | :--- | :--- | :--- |
-| **🐧 Linux Native** | Linux (e.g. Arch) | Linux (Native) | `/opt/antigravity-ide/resources/app/out/...` | Requires directory ownership |
-| **🪟 Windows Native** | Windows | Windows (Native) | `%LOCALAPPDATA%/Programs/Antigravity IDE/...` | None (Automatic) |
-| **🌐 WSL Remote** | Linux (WSL) | Windows (WSL Client) | `/mnt/c/Users/<user>/AppData/Local/Programs/Antigravity IDE/...` | None (Automatic via WSL mount) |
-
----
-
-## ⚙️ Prerequisites & Setup Guide
-
-Ensure the following prerequisites are installed based on your target system:
-
-### 1. General Requirements
-*   **Python 3** must be installed (used to run fallback database queries).
-*   **lsof** utility (required on Linux/WSL for active LSP port scanning).
-
-### 2. Environment Specific Installation Steps
-
-#### 🐧 Linux Native
-1. Install `lsof` tool via your package manager:
-   ```bash
-   sudo pacman -S lsof   # Arch Linux
-   sudo apt install lsof # Debian/Ubuntu
-   ```
-2. Grant write permissions to the IDE installation directory so the clicker script can be injected:
-   ```bash
-   sudo chown -R $USER:$USER /opt/antigravity-ide
-   ```
-
-#### 🪟 Windows Native
-1. Ensure Python 3 is installed and added to your system environment variables (`PATH`).
-2. No extra commands are needed! The IDE installs directly into your user's AppData directory (`%LOCALAPPDATA%\Programs\Antigravity IDE`), allowing the extension to handle setup automatically.
-
-#### 🌐 Windows via WSL (Remote - WSL)
-1. Ensure Python 3 is installed inside your WSL instance.
-2. The extension dynamically detects the WSL environment and automatically injects the clicker script into your Windows host's AppData path (`/mnt/c/Users/<user>/AppData/...`).
-3. No manual folder ownership commands are required.
+1.  Download the `.vsix` file from [Releases](https://github.com/kasuganozomi/super-sentinel-antigravity-IDE-extension/releases).
+2.  In VS Code / Antigravity IDE: `Extensions` → `...` → `Install from VSIX...`
+3.  Reload the window.
+4.  The **Super Sentinel** icon will appear in the Activity Bar.
 
 ---
 
-## 🛠️ Custom Skills Configuration
+## 🖥️ Usage
 
-The extension scans for custom agent skills to display in the sidebar analytics. Place your custom skill folders in the paths listed below based on your active OS:
+### Status Bar
+The status bar pill at the bottom-left updates automatically:
+- Shows `ACTIVE` / `PAUSED` / `NOT INSTALLED` state
+- Displays active model name and remaining quota %
+- Shows countdown until quota resets (HH:MM:SS)
 
-*   **🐧 Linux Native**: `~/.gemini/config/skills/`
-*   **🪟 Windows Native**: `C:\Users\<user>\.gemini\config\skills\`
-*   **🌐 WSL Remote**: `/home/<wsl-user>/.gemini/config/skills/` *(Place them inside the WSL filesystem)*
+### Dashboard Tabs
 
-### Skill Folder Directory Structure
-To be detected correctly, your skill must follow this layout:
-```text
-.gemini/
-└── config/
-    └── skills/
-        └── my-custom-skill-folder/
-            ├── SKILL.md        <-- Must contain name and description in frontmatter
-            └── scripts/        <-- (Optional helper scripts)
+| Tab | Description |
+|-----|-------------|
+| **Radar** | Live session metrics, context window, model list |
+| **Skills/MCP** | Active skills and MCP servers with copy-prompt |
+| **Clicker** | Auto-click configuration and activity log |
+
+### Auto-Clicker Modes
+- **All Permissions**: Auto-approve everything
+- **Selective**: Choose which tool types to auto-approve (browser, command, files, planning)
+- **Paused**: Disable all auto-approvals
+
+---
+
+## ⚙️ Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `antigravity-super-sentinel.enabled` | `true` | Master toggle for auto-click and auto-scroll |
+| `antigravity-super-sentinel.scrollEnabled` | `true` | Toggle auto-scroll |
+
+---
+
+## 🏗️ Architecture
+
+```
+Extension Host (Node.js)
+├── Status Bar        ← Lean 5s poll, transcript-based model detection
+├── Webview Dashboard ← 5s poll via postMessage, zero blocking calls
+├── Auto-Clicker      ← workbench.html injection with V8 cache clear
+└── State             ← Lightweight JSON persistence
 ```
 
-#### Example `SKILL.md` Frontmatter:
-```markdown
----
-name: My Custom Agent Skill
-description: Executing advanced code refactoring pipelines with precision.
----
-# Instructions
-Detail your skill's instructions here...
-```
+**Performance design:**
+- Status bar reads transcript file directly — no SQLite, no network, no fallbacks
+- Dashboard poll uses a 4s TTL cache — `gatherSentinelData()` never blocks the IDE
+- No `execSync` on hot paths — all periodic work is non-blocking async
 
 ---
 
-## 🎨 Technology Stack
+## 📋 Requirements
 
-*   **Extension Core**: Node.js & VS Code Extension API.
-*   **Dashboard UI**: HTML, JS, and CSS with deep-dark glassmorphism, featuring a cyberpunk purple-pink theme.
-*   **LSP Telemetry**: Process memory query via local HTTPS Basic Auth.
-
----
-*Crafted by Kadzura with absolute precision and premium design metrics.*
+- Google Antigravity IDE (VS Code-based)
+- Linux, Windows (with WSL), or macOS
+- Antigravity agent session must be active for live telemetry
 
 ---
 
-## 📋 Changelog
+## 📄 License
 
-### v2.3.0 — Zero-Sync Architecture / Total Lean Rewrite (2026-06-26)
-
-> **Major architecture overhaul.** Extension is now completely non-intrusive to Antigravity IDE.
-> Zero synchronous file I/O in any hot path. No interruption to agent experience.
-
-#### Root causes fixed
-- `gatherSentinelData()` was doing synchronous `fs.readFileSync` on transcripts that can be 1–5 MB — every 4 seconds, blocking the extension host event loop during every agent write.
-- `fs.readdirSync(brainDir)` + multiple `fs.statSync` calls ran synchronously every 10 seconds to discover the latest session.
-- Account cache was written to disk every 4 seconds even when data hadn’t changed, triggering the file watcher which triggered another `updateStatusBar()` and more file reads — a self-sustaining I/O loop.
-- `readState()` was called twice per update cycle (once in `updateStatusBar`, once in `gatherSentinelData`) with no caching, causing double disk reads.
-- `refreshChildSessionsAsync()` was async in name only — `fs.readdirSync` inside still blocked the event loop.
-- Skills scan (`fs.readdirSync` + multiple `fs.readFileSync`) and MCP config read ran synchronously inside the hot path.
-
-#### Architecture changes
-- 🧵 **`gatherSentinelData()` is now 100% memory-only** — zero file I/O in the hot path, assembles from caches populated by background async intervals.
-- 🔄 **6 new dedicated async background intervals** (all using `fs.promises`, never blocking):
-  - `refreshTranscriptAsync()` — every **3s**: reads + parses transcript file asynchronously.
-  - `refreshSessionAsync()` — every **15s**: discovers latest session via `fs.promises.readdir/stat`.
-  - `refreshSkillsAsync()` — every **60s**: scans skills folder via `fs.promises`.
-  - `refreshMcpAsync()` — every **30s**: reads MCP config via `fs.promises`.
-  - `refreshSqliteAsync()` — every **8s**: Python subprocess (unchanged, already async).
-  - `refreshChildSessionsAsync()` — every **30s**: fixed to use `fs.promises.readdir`.
-- 🗄️ **`readState()` TTL cache (1.5s)**: prevents double-read per update cycle.
-- 🔒 **Account write guard**: disk write only if data changed AND minimum 30s since last write.
-- 🛡️ **Self-write guard in file watcher**: ignores events generated by our own `writeState()` calls (300ms window), stopping the write→watcher→read→write loop entirely.
-- **`writeState()` updates in-memory cache immediately** after writing to avoid stale reads.
-
-#### Impact
-- Agent writing a file, changing one word: **extension host does zero work** between its 3–8s background intervals.
-- All transcript parsing is off-thread (async).
-- All session scanning is off-thread (async).
-- No self-triggering I/O loops.
-- deactivate() now correctly clears all 7 intervals.
-
-### v2.2.2 — Active Model Indicator Fix (2026-06-26)
-
-> **Hotfix for active model indicator jumping between models.**
-
-- 🔧 **Restored transcript as Priority 1** for active model detection — reads
-  `USER_SETTINGS_CHANGE` system message injected by IDE on every model switch,
-  gives exact human-readable display name with no ID mapping required.
-- 🔧 **SQLite kept as Priority 2** — fallback for cross-session persistence
-  when no model-switch event exists in the current session transcript.
-- ❌ **Removed `modelsList[0]` arbitrary fallback** (root cause of random jumping
-  between Opus / Gemini / GPT depending on LSP response ordering).
-- 🧲 **Added sticky "last-known-good" cache** — when both P1 and P2 fail, the
-  indicator freezes at the last successfully resolved value instead of jumping
-  or resetting to a hardcoded default.
-- 🧹 Cleaned up orphan `cachedTranscriptActiveModel` variable and dead code
-  from the intermediate SQLite-only attempt.
-
-### v2.2.1 — Performance Refactor (2026-06-25)
-
-> **Critical performance fix.** This version eliminates the IDE lag caused by the extension.
-
-- ♻️ **Replaced all `execSync` with non-blocking `execAsync`** — powershell, netstat, python subprocess, and agentapi calls no longer block the main thread.
-- 🗄️ **Multi-layer TTL cache system** — `gatherSentinelData()` (4s), `isScriptInjected()` (10s), `getWorkbenchPath()` (60s), skills scan (60s), MCP config (30s).
-- ⚡ **WSL path detection pinned** — computed once at startup, never repeated.
-- 🔀 **Child session scan isolated** — moved to dedicated 30s async background interval (was blocking inline every 2–3s).
-- 🔀 **SQLite refresh isolated** — moved to dedicated 8s async background interval.
-- ⏱️ **Polling intervals extended** — LSP: 3s → 8s (with concurrency guard), Sidebar: 2s → 5s.
-- 🧹 Removed `__metadata` residue from `package.json`.
-- ➕ Added `keywords` field for Open VSX/Marketplace discoverability.
-
-### v2.2.0
-- Multi-account analytics and account cache saving.
-- Child sub-session tracking via agentapi.
-- Browser recording frames in dashboard.
-
-### v2.1.x
-- LSP telemetry via HTTPS/HTTP with CSRF token.
-- SQLite model info fallback via Python script.
-- Skills and MCP config scanning.
-
-### v2.0.0
-- Sidebar WebView dashboard.
-- Status bar with active model, quota, and countdown display.
-- State file watcher for real-time sync.
+MIT — see [LICENSE.txt](LICENSE.txt)
